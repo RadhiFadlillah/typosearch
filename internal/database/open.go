@@ -86,7 +86,6 @@ CREATE TABLE IF NOT EXISTS document_token (
 	start       INTEGER NOT NULL,
 	end         INTEGER NOT NULL,
 	token       TEXT    NOT NULL,
-	UNIQUE (document_id, start),
 	CHECK (start <= end),
 	FOREIGN KEY (document_id) REFERENCES document (id) ON DELETE CASCADE
 )`
