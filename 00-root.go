@@ -22,7 +22,7 @@ type Storage struct {
 	processors []Processor
 }
 
-// OpenStorage open the trigram indexes in the specified path.
+// Open the search storage in the specified path.
 func OpenStorage(path string) (*Storage, error) {
 	db, err := database.Open(path)
 	if err != nil {
@@ -32,10 +32,10 @@ func OpenStorage(path string) (*Storage, error) {
 	return &Storage{db: db}, nil
 }
 
-// ApplyProcessors apply one or more [Processor] function to the [Storage]. These
-// processors later will be used on the submitted [Document] and on search queries.
-// These processors are not saved inside Storage, so make sure to re-apply it
-// whenever you open the storage.
+// Apply one or more [Processor] function to the [Storage]. These processors later
+// will be used on the submitted [Document] and on search queries. These processors
+// are not saved inside Storage, so make sure to re-apply it whenever you open the
+// storage.
 func (s *Storage) ApplyProcessors(processors ...Processor) {
 	s.processors = processors
 }

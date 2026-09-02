@@ -8,21 +8,21 @@ import (
 // be zero, if that rune is supposed to be removed.
 type Processor func(r rune) []rune
 
-// LowerCaser is processor that change a rune into its lower case form.
+// Processor that change a rune into its lower case form.
 func LowerCaser() Processor {
 	return func(r rune) []rune {
 		return []rune{unicode.ToLower(r)}
 	}
 }
 
-// UpperCaser is processor that change a rune into its upper case form.
+// Processor that change a rune into its upper case form.
 func UpperCaser() Processor {
 	return func(r rune) []rune {
 		return []rune{unicode.ToUpper(r)}
 	}
 }
 
-// RuneRemover is processor that removes every rune that submitted in parameter.
+// Processor that removes every rune that submitted in parameter.
 func RuneRemover(removableRunes ...rune) Processor {
 	mapRemovableRunes := make(map[rune]struct{})
 	for _, r := range removableRunes {
@@ -37,8 +37,8 @@ func RuneRemover(removableRunes ...rune) Processor {
 	}
 }
 
-// RuneRemoverFn is processor that accepts a filter function. Every rune that
-// returned true by filter will be removed.
+// Processor that accepts a filter function. Every rune that returned true by
+// filter will be removed.
 func RuneRemoverFn(filter func(r rune) bool) Processor {
 	return func(r rune) []rune {
 		if filter(r) {
