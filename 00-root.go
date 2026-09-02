@@ -1,7 +1,7 @@
 package typosearch
 
 import (
-	"github.com/RadhiFadlillah/typo-search/internal/database"
+	"github.com/RadhiFadlillah/typosearch/internal/database"
 	"github.com/jmoiron/sqlx"
 
 	_ "modernc.org/sqlite"

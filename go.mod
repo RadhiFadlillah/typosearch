@@ -1,4 +1,4 @@
-module github.com/RadhiFadlillah/typo-search
+module github.com/RadhiFadlillah/typosearch
 
 go 1.27.0
 
