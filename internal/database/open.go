@@ -9,9 +9,6 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-//go:embed ddl.sql
-var ddlQueries string
-
 // Open opens database and initiate the tables if they don't exist.
 func Open(path string) (db *sqlx.DB, err error) {
 	// Prepare DSN
@@ -53,10 +50,16 @@ func Open(path string) (db *sqlx.DB, err error) {
 	}()
 
 	// Run DDL queries
-	_, err = tx.Exec(ddlQueries)
-	if err != nil {
-		err = fmt.Errorf("failed to exec ddl: %v", err)
-		return
+	ddlQueries := []string{
+		ddlCreateDocument,
+		ddlCreateDocumentToken,
+		ddlCreateDocumentTokenIndexToken}
+
+	for _, query := range ddlQueries {
+		_, err = tx.Exec(query)
+		if err != nil {
+			return
+		}
 	}
 
 	// Commit transaction
@@ -68,3 +71,25 @@ func Open(path string) (db *sqlx.DB, err error) {
 
 	return
 }
+
+const ddlCreateDocument = `
+CREATE TABLE IF NOT EXISTS document (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	identifier TEXT    NOT NULL UNIQUE,
+	content    TEXT    NOT NULL,
+	UNIQUE (identifier)
+)`
+
+const ddlCreateDocumentToken = `
+CREATE TABLE IF NOT EXISTS document_token (
+	document_id INTEGER NOT NULL,
+	start       INTEGER NOT NULL,
+	end         INTEGER NOT NULL,
+	token       TEXT    NOT NULL,
+	UNIQUE (document_id, start),
+	CHECK (start <= end),
+	FOREIGN KEY (document_id) REFERENCES document (id) ON DELETE CASCADE
+)`
+
+const ddlCreateDocumentTokenIndexToken = `
+CREATE INDEX IF NOT EXISTS document_token_idx_token ON document_token (token)`

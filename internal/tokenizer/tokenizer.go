@@ -3,9 +3,16 @@ package tokenizer
 import "slices"
 
 // Tokenize runs processor on the s, then separate it into trigram runes.
-func Tokenize(s string, processors ...func(r rune) []rune) [][]ProcessedRune {
+func Tokenize(s string, processors ...func(r rune) []rune) []ProcessedRuneGroup {
 	processedRunes := ProcessRunes(s, processors...)
-	return NGrams(processedRunes, 3)
+	trigrams := NGrams(processedRunes, 3)
+
+	result := make([]ProcessedRuneGroup, len(trigrams))
+	for i := range result {
+		result[i] = ProcessedRuneGroup(trigrams[i])
+	}
+
+	return result
 }
 
 // NGrams splits an array into n-grams of specified size.
