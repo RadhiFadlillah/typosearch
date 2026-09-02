@@ -48,7 +48,8 @@ func (s *Storage) ApplyProcessors(processors ...Processor) {
 	s.processors = processors
 }
 
-// AddDocuments save and index the documents into the storage.
+// AddDocuments save and index the documents into the storage. If the document with
+// matching ID already exist, it will be updated.
 func (s *Storage) AddDocuments(docs ...Document) error {
 	// Cast Document to insert arg
 	dbDocs := make([]database.InsertDocumentArg, len(docs))
@@ -66,4 +67,9 @@ func (s *Storage) AddDocuments(docs ...Document) error {
 	}
 
 	return database.InsertDocuments(s.db, dbProcessors, dbDocs)
+}
+
+// DeleteDocuments remove the documents in the storage.
+func (st *Storage) DeleteDocuments(ids ...string) error {
+	return database.DeleteDocuments(st.db, ids...)
 }
