@@ -36,9 +36,9 @@ type MatchedDocument struct {
 // Storage is the container for storing trigram indexes for documents that will be
 // searched later. Use sqlite3 as database engine.
 type Storage struct {
-	db         *sqlx.DB
-	processors []func(rune) []rune
-	threshold  float64
+	db        *sqlx.DB
+	processor func(rune) []rune
+	threshold float64
 }
 
 // Open the search storage in the specified path.
@@ -55,11 +55,8 @@ func OpenStorage(path string) (*Storage, error) {
 // will be used on the submitted [Document] and on search queries. These processors
 // are not saved inside Storage, so make sure to re-apply it whenever you open the
 // storage.
-func (s *Storage) ApplyProcessors(processors ...Processor) *Storage {
-	s.processors = make([]func(rune) []rune, len(processors))
-	for i, p := range processors {
-		s.processors[i] = p
-	}
+func (s *Storage) ApplyProcessor(processor Processor) *Storage {
+	s.processor = processor
 	return s
 }
 
@@ -89,7 +86,7 @@ func (s *Storage) AddDocuments(docs ...Document) error {
 		}
 	}
 
-	return database.InsertDocuments(s.db, s.processors, dbDocs)
+	return database.InsertDocuments(s.db, s.processor, dbDocs)
 }
 
 // DeleteDocuments remove the documents in the storage.
@@ -106,7 +103,7 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 	}
 
 	// Convert the query into tokens
-	queryTokens := tokenizer.Tokenize(query, s.processors...)
+	queryTokens := tokenizer.Tokenize(query, s.processor)
 
 	// Convert tokens into strings
 	tokenStrings := make([]string, len(queryTokens))

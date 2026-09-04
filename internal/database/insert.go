@@ -15,7 +15,7 @@ type InsertDocumentArg struct {
 }
 
 // InsertDocuments save the documents into the database.
-func InsertDocuments(db *sqlx.DB, processors []func(r rune) []rune, args []InsertDocumentArg) (err error) {
+func InsertDocuments(db *sqlx.DB, processor func(r rune) []rune, args []InsertDocumentArg) (err error) {
 	// If there are no args submitted, stop early
 	if len(args) == 0 {
 		return nil
@@ -119,7 +119,7 @@ func InsertDocuments(db *sqlx.DB, processors []func(r rune) []rune, args []Inser
 		}
 
 		// Save tokens
-		for _, token := range tokenizer.Tokenize(arg.Content, processors...) {
+		for _, token := range tokenizer.Tokenize(arg.Content, processor) {
 			text := token.String()
 			start, end := token.Range()
 

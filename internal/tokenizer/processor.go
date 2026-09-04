@@ -37,24 +37,12 @@ func (prg ProcessedRuneGroup) Range() (int, int) {
 // ProcessRunes applies each processor to every rune in s and returns the resulting
 // runes together with its source position in the original string. Processors may
 // delete, replace, or expand runes.
-func ProcessRunes(s string, processors ...func(r rune) []rune) ProcessedRuneGroup {
+func ProcessRunes(s string, processor func(r rune) []rune) ProcessedRuneGroup {
 	var idx int
 	result := make([]ProcessedRune, 0, utf8.RuneCountInString(s))
 
 	for _, r := range s {
-		processed := []rune{r}
-
-		// Apply the processors to this rune
-		for _, processor := range processors {
-			next := make([]rune, 0, len(processed))
-			for _, rr := range processed {
-				next = append(next, processor(rr)...)
-			}
-			processed = next
-		}
-
-		// Once all processors applied, save to the result
-		for _, rr := range processed {
+		for _, rr := range processor(r) {
 			result = append(result, ProcessedRune{
 				R:     rr,
 				Index: idx,
