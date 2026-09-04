@@ -82,12 +82,15 @@ func snapMarkerToWordBoundaries(textRunes []rune, position [2]int) [2]int {
 	if start < 0 {
 		start = 0
 	}
+
 	if start > n {
 		start = n
 	}
+
 	if end < start {
 		end = start
 	}
+
 	if end > n {
 		end = n
 	}

@@ -126,6 +126,12 @@ func Test_snapMarkersToWordBoundaries(t *testing.T) {
 			positions: [][2]int{{1, 3}, {7, 8}}, // "んに", "界"
 			want:      [][2]int{{0, 5}, {6, 8}}, // "こんにちは", "世界"
 		},
+		{
+			name:      "zero length position",
+			text:      "one two three",
+			positions: [][2]int{{0, 0}},
+			want:      [][2]int{{0, 0}},
+		},
 	}
 
 	for _, tt := range tests {
