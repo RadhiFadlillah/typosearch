@@ -176,8 +176,8 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 			completeness := calcCompleteness(groupSize, nQueryToken)
 			score := compactness * completeness
 
-			// If the score is above threshold, save it
-			if score >= scoreThreshold {
+			// If the score is good enough, save it
+			if score >= 0.5 {
 				tokenGroups = append(tokenGroups, ScoredTokens{
 					Tokens: currentGroup,
 					Score:  score,
@@ -238,6 +238,11 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 
 			leftoverScores := weightedSum / sumOfWeight
 			combinedScore = topScore + (1-topScore)*leftoverScores*alpha
+		}
+
+		// Check if combined score passed the threshold
+		if combinedScore <= s.threshold {
+			continue
 		}
 
 		// Convert token groups into positions
