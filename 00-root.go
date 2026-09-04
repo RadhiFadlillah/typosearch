@@ -257,6 +257,11 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		})
 	}
 
+	// If there are no search results, stop
+	if len(searchResults) == 0 {
+		return nil, nil
+	}
+
 	// Fetch content for search result
 	dbIDs := make([]int, len(searchResults))
 	for i, sr := range searchResults {
