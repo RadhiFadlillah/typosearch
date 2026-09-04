@@ -30,7 +30,7 @@ func (prg ProcessedRuneGroup) Range() (int, int) {
 	}
 
 	start := prg[0].Index
-	end := prg[len(prg)-1].Index
+	end := prg[len(prg)-1].Index + 1 // +1 because in Go upper bound is exclusive
 	return start, end
 }
 
