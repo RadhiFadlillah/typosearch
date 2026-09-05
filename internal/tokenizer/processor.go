@@ -41,6 +41,10 @@ func ProcessRunes(s string, processor func(r rune) []rune) ProcessedRuneGroup {
 	var idx int
 	result := make([]ProcessedRune, 0, utf8.RuneCountInString(s))
 
+	if processor == nil {
+		processor = func(r rune) []rune { return []rune{r} }
+	}
+
 	for _, r := range s {
 		for _, rr := range processor(r) {
 			result = append(result, ProcessedRune{
