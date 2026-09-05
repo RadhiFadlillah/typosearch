@@ -94,7 +94,9 @@ func (st *Storage) DeleteDocuments(ids ...string) error {
 	return database.DeleteDocuments(st.db, ids...)
 }
 
-// Search the storage for suitable documents.
+// Search the storage for suitable documents. The returned documents will have its
+// content normalized in NFD format. If users need NFC, they need to normalize it
+// themselves using norm.NFC.
 func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 	// Clear up spaces from query
 	query = strings.Join(strings.Fields(query), " ")

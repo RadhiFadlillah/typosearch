@@ -6,6 +6,7 @@ import (
 
 	"github.com/RadhiFadlillah/typosearch/internal/tokenizer"
 	"github.com/jmoiron/sqlx"
+	"golang.org/x/text/unicode/norm"
 )
 
 // InsertArg is argument for inserting Document.
@@ -95,11 +96,15 @@ func InsertDocuments(db *sqlx.DB, processor func(r rune) []rune, args []InsertDo
 			}
 		}
 
+		// Normalize and decompose document's content.
+		// We store the NFD version of content so it can be transformed by processor.
+		nfdContent := norm.NFD.String(arg.Content)
+
 		// Save document
 		var res sql.Result
 		res, err = stmtInsertDoc.Exec(
 			arg.Identifier,
-			arg.Content)
+			nfdContent)
 		if err != nil {
 			return
 		}
@@ -119,7 +124,7 @@ func InsertDocuments(db *sqlx.DB, processor func(r rune) []rune, args []InsertDo
 		}
 
 		// Save tokens
-		for _, token := range tokenizer.Tokenize(arg.Content, processor) {
+		for _, token := range tokenizer.Tokenize(nfdContent, processor) {
 			text := token.String()
 			start, end := token.Range()
 
