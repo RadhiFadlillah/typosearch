@@ -31,20 +31,16 @@ type MatchedDocument struct {
 	// WordMarkers is list of word-based marker position inside Document. Represented
 	// as 2-tuple of `[start, end]`.
 	WordMarkers [][2]int
-
 	// Score is confidence level for this [Document].
 	Score float64
-	// EditDistance is how different the query and the matched text.
-	EditDistance int
 }
 
 // _ScoredTokenGroup is internal object to track score for a token group.
 type _ScoredTokenGroup struct {
-	Tokens       []database.DocumentToken
-	Score        float64
-	Marker       [2]int
-	WordMarker   [2]int
-	EditDistance int
+	Tokens     []database.DocumentToken
+	Score      float64
+	Marker     [2]int
+	WordMarker [2]int
 }
 
 // Storage is the container for storing trigram indexes for documents that will be
@@ -120,6 +116,7 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 
 	// Convert the query into tokens
 	queryTokens, query := tokenizer.Tokenize(query, s.processor)
+	queryLength := len(queryTokens) + 3 - 1 // it was in trigram, so we revert it
 
 	// Convert tokens into strings
 	tokenStrings := make([]string, len(queryTokens))
@@ -152,17 +149,16 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		docContent := []rune(doc.Content)
 
 		// Score each token group
-		minEditDistance := -1
 		tokenGroups := make([]_ScoredTokenGroup, 0, len(doc.TokenGroups))
 
 		for _, tg := range doc.TokenGroups {
-			// Do heuristic scoring
-			compactness := calcCompactness(tg)
-			completeness := calcCompleteness(len(tg), nQueryToken)
-			score := compactness * completeness
+			// Do coverage scoring for quick check, using geometric mean
+			precision := calcCompactness(tg)                 // did we get unneeded stuff?
+			recall := calcCompleteness(len(tg), nQueryToken) // did we capture everything?
+			coverage := math.Pow(precision, 0.5) * math.Pow(recall, 0.5)
 
-			// If the score is too bad, skip it
-			if score < 0.5 {
+			// If the quick score is too bad, skip it
+			if coverage < 0.5 {
 				continue
 			}
 
@@ -174,22 +170,19 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 
 			// Check edit distance for this group
 			tgRunes := docContent[wordMarker[0]:wordMarker[1]]
-			_, processedText := tokenizer.ProcessRunes(tgRunes, s.processor)
+			processedRunes, processedText := tokenizer.ProcessRunes(tgRunes, s.processor)
 			editDistance := smetrics.Ukkonen(query, processedText, 1, 1, 1)
 
-			// Save the group
-			if minEditDistance < 0 {
-				minEditDistance = editDistance
-			} else {
-				minEditDistance = min(minEditDistance, editDistance)
-			}
+			// Calculate accuracy using edit distance, then use it as confidence level
+			maxLength := max(queryLength, len(processedRunes))
+			accuracy := 1.0 - float64(editDistance)/float64(maxLength)
 
+			// Save the group
 			tokenGroups = append(tokenGroups, _ScoredTokenGroup{
-				Tokens:       tg,
-				Score:        score,
-				Marker:       marker,
-				WordMarker:   wordMarker,
-				EditDistance: editDistance,
+				Tokens:     tg,
+				Score:      accuracy,
+				Marker:     marker,
+				WordMarker: wordMarker,
 			})
 		}
 
@@ -199,17 +192,12 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 			continue
 		}
 
-		// Sort the token groups by the best score
+		// Sort the token groups
 		sort.Slice(tokenGroups, func(i, j int) bool {
 			tg1 := tokenGroups[i]
 			tg2 := tokenGroups[j]
 
-			// Edit distance
-			if tg1.EditDistance != tg2.EditDistance {
-				return tg1.EditDistance < tg2.EditDistance
-			}
-
-			// Heuristic score
+			// Score
 			if tg1.Score != tg2.Score {
 				return tg1.Score > tg2.Score
 			}
@@ -238,9 +226,7 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 			Content:     doc.Content,
 			Markers:     markers,
 			WordMarkers: wordMarkers,
-
-			Score:        combinedScore,
-			EditDistance: minEditDistance,
+			Score:       combinedScore,
 		})
 	}
 
@@ -254,12 +240,7 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		fr1 := searchResults[i]
 		fr2 := searchResults[j]
 
-		// By edit distance
-		if fr1.EditDistance != fr2.EditDistance {
-			return fr1.EditDistance < fr2.EditDistance
-		}
-
-		// By best score
+		// By combined score
 		if fr1.Score != fr2.Score {
 			return fr1.Score > fr2.Score
 		}
