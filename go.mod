@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	github.com/jmoiron/sqlx v1.4.0
+	github.com/xrash/smetrics v0.0.0-20250705151800-55b8f293f342
 	golang.org/x/text v0.41.0
 	modernc.org/sqlite v1.57.0
 )

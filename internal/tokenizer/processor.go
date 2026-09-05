@@ -2,7 +2,6 @@ package tokenizer
 
 import (
 	"strings"
-	"unicode/utf8"
 )
 
 // Container for a processed rune and its position in the original string.
@@ -35,18 +34,22 @@ func (prg ProcessedRuneGroup) Range() (int, int) {
 }
 
 // ProcessRunes applies each processor to every rune in s and returns the resulting
-// runes together with its source position in the original string. Processors may
-// delete, replace, or expand runes.
-func ProcessRunes(s string, processor func(r rune) []rune) ProcessedRuneGroup {
-	var idx int
-	result := make([]ProcessedRune, 0, utf8.RuneCountInString(s))
-
+// both the processed runes and its string. Every rune is attached with its source
+// position in the original string.
+func ProcessRunes(originalRunes []rune, processor func(r rune) []rune) (ProcessedRuneGroup, string) {
+	// Apply default processor
 	if processor == nil {
 		processor = func(r rune) []rune { return []rune{r} }
 	}
 
-	for _, r := range s {
+	// Prepare result
+	var sb strings.Builder
+	result := make([]ProcessedRune, 0, len(originalRunes))
+
+	var idx int
+	for _, r := range originalRunes {
 		for _, rr := range processor(r) {
+			sb.WriteRune(rr)
 			result = append(result, ProcessedRune{
 				R:     rr,
 				Index: idx,
@@ -57,5 +60,5 @@ func ProcessRunes(s string, processor func(r rune) []rune) ProcessedRuneGroup {
 		idx++
 	}
 
-	return result
+	return result, sb.String()
 }

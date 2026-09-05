@@ -124,7 +124,8 @@ func InsertDocuments(db *sqlx.DB, processor func(r rune) []rune, args []InsertDo
 		}
 
 		// Save tokens
-		for _, token := range tokenizer.Tokenize(nfdContent, processor) {
+		tokens, _ := tokenizer.Tokenize(nfdContent, processor)
+		for _, token := range tokens {
 			text := token.String()
 			start, end := token.Range()
 

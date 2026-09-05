@@ -2,12 +2,14 @@ package typosearch
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/RadhiFadlillah/typosearch/internal/database"
 	"github.com/RadhiFadlillah/typosearch/internal/tokenizer"
 	"github.com/jmoiron/sqlx"
+	"github.com/xrash/smetrics"
 
 	_ "modernc.org/sqlite"
 )
@@ -23,22 +25,26 @@ type Document struct {
 // MatchedDocument is the document that matched with the search query.
 type MatchedDocument struct {
 	Document
-	// Score is confidence level for this [Document].
-	Score float64
 	// Markers is list of rune-based marker position inside Document. Represented
 	// as 2-tuple of `[start, end]`.
 	Markers [][2]int
 	// WordMarkers is list of word-based marker position inside Document. Represented
 	// as 2-tuple of `[start, end]`.
 	WordMarkers [][2]int
-	// dbID is private field to represent Document IDs (not identifier) in database
-	dbID int
+
+	// Score is confidence level for this [Document].
+	Score float64
+	// EditDistance is how different the query and the matched text.
+	EditDistance int
 }
 
 // _ScoredTokenGroup is internal object to track score for a token group.
 type _ScoredTokenGroup struct {
-	Tokens []database.DocumentToken
-	Score  float64
+	Tokens       []database.DocumentToken
+	Score        float64
+	Marker       [2]int
+	WordMarker   [2]int
+	EditDistance int
 }
 
 // Storage is the container for storing trigram indexes for documents that will be
@@ -113,7 +119,7 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 	}
 
 	// Convert the query into tokens
-	queryTokens := tokenizer.Tokenize(query, s.processor)
+	queryTokens, query := tokenizer.Tokenize(query, s.processor)
 
 	// Convert tokens into strings
 	tokenStrings := make([]string, len(queryTokens))
@@ -142,33 +148,74 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 	searchResults := make([]MatchedDocument, 0, len(documents))
 
 	for _, doc := range documents {
+		// Extract content of doc
+		docContent := []rune(doc.Content)
+
 		// Score each token group
+		minEditDistance := -1
 		tokenGroups := make([]_ScoredTokenGroup, 0, len(doc.TokenGroups))
+
 		for _, tg := range doc.TokenGroups {
+			// Do heuristic scoring
 			compactness := calcCompactness(tg)
 			completeness := calcCompleteness(len(tg), nQueryToken)
 			score := compactness * completeness
 
-			// If the score is good enough, save it
-			if score >= 0.5 {
-				tokenGroups = append(tokenGroups, _ScoredTokenGroup{
-					Tokens: tg,
-					Score:  score,
-				})
+			// If the score is too bad, skip it
+			if score < 0.5 {
+				continue
 			}
+
+			// Create marker for this group
+			start := tg[0].Start
+			end := tg[len(tg)-1].End
+			marker := [2]int{start, end}
+			wordMarker := snapMarkerToWordBoundaries(docContent, marker)
+
+			// Check edit distance for this group
+			tgRunes := docContent[wordMarker[0]:wordMarker[1]]
+			_, processedText := tokenizer.ProcessRunes(tgRunes, s.processor)
+			editDistance := smetrics.Ukkonen(query, processedText, 1, 1, 1)
+
+			// Save the group
+			if minEditDistance < 0 {
+				minEditDistance = editDistance
+			} else {
+				minEditDistance = min(minEditDistance, editDistance)
+			}
+
+			tokenGroups = append(tokenGroups, _ScoredTokenGroup{
+				Tokens:       tg,
+				Score:        score,
+				Marker:       marker,
+				WordMarker:   wordMarker,
+				EditDistance: editDistance,
+			})
 		}
 
 		// If there are no good enough group, continue to next document
-		if len(tokenGroups) == 0 {
+		nTokenGroups := len(tokenGroups)
+		if nTokenGroups == 0 {
 			continue
 		}
 
 		// Sort the token groups by the best score
 		sort.Slice(tokenGroups, func(i, j int) bool {
-			if tokenGroups[i].Score != tokenGroups[j].Score {
-				return tokenGroups[i].Score > tokenGroups[j].Score
+			tg1 := tokenGroups[i]
+			tg2 := tokenGroups[j]
+
+			// Edit distance
+			if tg1.EditDistance != tg2.EditDistance {
+				return tg1.EditDistance < tg2.EditDistance
 			}
-			return len(tokenGroups[i].Tokens) > len(tokenGroups[j].Tokens)
+
+			// Heuristic score
+			if tg1.Score != tg2.Score {
+				return tg1.Score > tg2.Score
+			}
+
+			// Count of tokens
+			return len(tg1.Tokens) > len(tg2.Tokens)
 		})
 
 		// Calc combined score and check if it pass
@@ -177,25 +224,23 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 			continue
 		}
 
-		// Convert token groups into marker positions
-		markers := make([][2]int, len(tokenGroups))
-		for i := range tokenGroups {
-			tokens := tokenGroups[i].Tokens
-			start := tokens[0].Start
-			end := tokens[len(tokens)-1].End
-			markers[i] = [2]int{start, end}
+		// Extract markers
+		markers := make([][2]int, nTokenGroups)
+		wordMarkers := make([][2]int, nTokenGroups)
+		for i, tg := range tokenGroups {
+			markers[i] = tg.Marker
+			wordMarkers[i] = tg.WordMarker
 		}
-
-		// Convert rune-based markers into word-based markers
-		wordMarkers := snapMarkersToWordBoundaries([]rune(doc.Content), markers)
 
 		// Save the result
 		searchResults = append(searchResults, MatchedDocument{
 			ID:          doc.Identifier,
 			Content:     doc.Content,
-			Score:       combinedScore,
 			Markers:     markers,
 			WordMarkers: wordMarkers,
+
+			Score:        combinedScore,
+			EditDistance: minEditDistance,
 		})
 	}
 
@@ -206,20 +251,25 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 
 	// Sort the search result
 	sort.Slice(searchResults, func(i, j int) bool {
-		// By best score
 		fr1 := searchResults[i]
 		fr2 := searchResults[j]
+
+		// By edit distance
+		if fr1.EditDistance != fr2.EditDistance {
+			return fr1.EditDistance < fr2.EditDistance
+		}
+
+		// By best score
 		if fr1.Score != fr2.Score {
 			return fr1.Score > fr2.Score
 		}
 
-		// By most group counts
-		n1 := len(fr1.Markers)
-		n2 := len(fr2.Markers)
-		if n1 != n2 {
-			return n1 > n2
+		// By match counts
+		if len(fr1.Markers) != len(fr2.Markers) {
+			return len(fr1.Markers) > len(fr2.Markers)
 		}
 
+		// By identifier
 		return fr1.ID < fr2.ID
 	})
 
@@ -274,16 +324,22 @@ func calcCompactness(documentTokens []database.DocumentToken) float64 {
 //   - leftover_scores is a normalized weighted sum of the leftover
 //   - alpha is how much the leftover_scores affect the top_score
 func calcCombinedScore(tokenGroups []_ScoredTokenGroup) float64 {
-	combinedScore := tokenGroups[0].Score
+	scores := make([]float64, len(tokenGroups))
+	for i, tg := range tokenGroups {
+		scores[i] = tg.Score
+	}
 
-	if len(tokenGroups) > 1 {
+	slices.Sort(scores)
+	combinedScore := scores[0]
+
+	if len(scores) > 1 {
 		alpha := 0.3
 		decay := 0.5
-		topScore := tokenGroups[0].Score
+		topScore := scores[0]
 
 		var weightedSum, sumOfWeight float64
-		for i := 1; i < len(tokenGroups); i++ {
-			score := tokenGroups[i].Score
+		for i := 1; i < len(scores); i++ {
+			score := scores[i]
 			weight := math.Pow(decay, float64(i-1))
 			weightedSum += score * weight
 			sumOfWeight += weight
