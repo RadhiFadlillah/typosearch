@@ -2,7 +2,6 @@ package typosearch
 
 import (
 	"math"
-	"slices"
 	"sort"
 	"strings"
 
@@ -280,19 +279,7 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 	// Apply content to search result
 	finalResults := make([]MatchedDocument, 0, len(searchResults))
 	for _, sr := range searchResults {
-		idx, found := slices.BinarySearchFunc(dbDocs, sr.dbID, func(doc database.Document, id int) int {
-			switch {
-			case doc.ID == id:
-				return 0
-			case doc.ID < id:
-				return -1
-			default:
-				return 1
-			}
-		})
-
-		if found {
-			dbDoc := dbDocs[idx]
+		if dbDoc, exist := dbDocs[sr.dbID]; exist {
 			sr.Document = Document{
 				ID:      dbDoc.Identifier,
 				Content: dbDoc.Content,

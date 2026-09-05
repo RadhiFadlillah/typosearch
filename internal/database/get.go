@@ -32,7 +32,7 @@ type DocumentToken struct {
 
 // GetDocuments fetch list of document based of its ids. It will be sorted according
 // to the submitted ids order.
-func GetDocuments(db *sqlx.DB, ids ...int) (docs []Document, err error) {
+func GetDocuments(db *sqlx.DB, ids ...int) (docs map[int]Document, err error) {
 	// Prepare query
 	stmt, args, err := sqlx.In(`
 		SELECT id, identifier, content
@@ -44,13 +44,16 @@ func GetDocuments(db *sqlx.DB, ids ...int) (docs []Document, err error) {
 	}
 
 	// Fetch list of documents from database
-	err = db.Select(&docs, stmt, args...)
+	var listDocs []Document
+	err = db.Select(&listDocs, stmt, args...)
 	if err != nil && err != sql.ErrNoRows {
 		return
 	}
 
-	if len(docs) == 0 {
-		return
+	// Convert list to map
+	docs = make(map[int]Document)
+	for _, doc := range listDocs {
+		docs[doc.ID] = doc
 	}
 
 	return
