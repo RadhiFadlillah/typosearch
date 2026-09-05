@@ -1,6 +1,13 @@
 package typosearch
 
-import "unicode"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+	"unicode"
+
+	"github.com/RadhiFadlillah/typosearch/internal/database"
+)
 
 // Adjust positions of a marker to word boundaries. It doesn't mutate the original position.
 func snapMarkerToWordBoundaries(textRunes []rune, marker [2]int) [2]int {
@@ -82,4 +89,20 @@ func mergeOverlappingMarkers(markers [][2]int) [][2]int {
 	}
 
 	return mergedMarkers
+}
+
+// Private debug function to print DocumentToken.
+func debugPrintDocumentTokens(prefix string, tokens ...database.DocumentToken) {
+	var strTokens, strStarts, strEnds, strQueryIndexes []string
+	for _, token := range tokens {
+		strTokens = append(strTokens, token.Token)
+		strStarts = append(strStarts, strconv.Itoa(token.Start))
+		strEnds = append(strEnds, strconv.Itoa(token.End))
+		strQueryIndexes = append(strQueryIndexes, strconv.Itoa(token.IndexInQuery))
+	}
+
+	fmt.Printf("%s%s\n", prefix, strings.Join(strTokens, "\t"))
+	fmt.Printf("%s%s\n", prefix, strings.Join(strStarts, "\t"))
+	fmt.Printf("%s%s\n", prefix, strings.Join(strEnds, "\t"))
+	fmt.Printf("%s%s\n", prefix, strings.Join(strQueryIndexes, "\t"))
 }
