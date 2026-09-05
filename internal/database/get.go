@@ -14,20 +14,27 @@ type Document struct {
 	Content    string `db:"content"`
 }
 
-// MatchedDocument represent list of Document that matched token search.
-type MatchedDocument struct {
+// DocumentToken is object representing table DocumentToken. There is an additional
+// field that not exist in database, for tracking token from query.
+type DocumentToken struct {
+	DocumentID int    `db:"document_id"`
+	Start      int    `db:"start"`
+	End        int    `db:"end"`
+	Token      string `db:"token"`
+
+	IndexInQuery int
+}
+
+// DocumentWithTokens represent Document and its matching tokens.
+type DocumentWithTokens struct {
 	DocumentID int
 	Tokens     []DocumentToken
 }
 
-// DocumentToken is object representing table DocumentToken. There is an additional
-// field that not exist in database, for tracking token from query.
-type DocumentToken struct {
-	DocumentID   int    `db:"document_id"`
-	Start        int    `db:"start"`
-	End          int    `db:"end"`
-	Token        string `db:"token"`
-	IndexInQuery int
+// MatchedDocument represent list of Document that matched token search.
+type MatchedDocument struct {
+	Document
+	TokenGroups [][]DocumentToken
 }
 
 // GetDocuments fetch list of document based of its ids. It will be sorted according
@@ -59,9 +66,20 @@ func GetDocuments(db *sqlx.DB, ids ...int) (docs map[int]Document, err error) {
 	return
 }
 
-// GetDocumentTokens fetch list of DocumentToken based on the specified tokens.
-func GetDocumentTokens(db *sqlx.DB, queryTokens ...string) (matchedDocuments []MatchedDocument, err error) {
-	// Prepare query
+// GetDocumentsByTokens fetch list of Documents based on the specified tokens.
+func GetDocumentsByTokens(db *sqlx.DB, queryTokens ...string) (
+	finalDocuments []MatchedDocument,
+	err error,
+) {
+	// Map each query tokens to its index. Notice here we use []int instead of int,
+	// because we might get multiple identical token in one query.
+	nQueryTokens := len(queryTokens)
+	tokenQueryIndexes := make(map[string][]int)
+	for i, token := range queryTokens {
+		tokenQueryIndexes[token] = append(tokenQueryIndexes[token], i)
+	}
+
+	// Fetch list of document tokens from database
 	stmt, args, err := sqlx.In(`
 		SELECT document_id, start, end, token
 		FROM document_token
@@ -71,63 +89,99 @@ func GetDocumentTokens(db *sqlx.DB, queryTokens ...string) (matchedDocuments []M
 		return
 	}
 
-	// Fetch list of tokens from database
-	var matchedTokens []DocumentToken
-	err = db.Select(&matchedTokens, stmt, args...)
+	var documentTokens []DocumentToken
+	err = db.Select(&documentTokens, stmt, args...)
 	if err != nil && err != sql.ErrNoRows {
 		return
 	}
 
-	// If there are no match, stop early
-	if len(matchedTokens) == 0 {
+	if len(documentTokens) == 0 {
 		return
 	}
 
-	// Map each query tokens to its index.
-	// Notice here we use []int instead of int, because we might get multiple
-	// identical token in one query.
-	mapTokenQueryIndexes := make(map[string][]int)
-	for i, token := range queryTokens {
-		mapTokenQueryIndexes[token] = append(mapTokenQueryIndexes[token], i)
+	// Group the document tokens by document id.
+	// While on it, also saves the token index in query.
+	documentsWithMatchedTokens := groupTokensByDocument(
+		documentTokens,
+		nQueryTokens,
+		tokenQueryIndexes,
+	)
+
+	// Fetch the content for those documents
+	documentIDs := make([]int, len(documentsWithMatchedTokens))
+	for i, d := range documentsWithMatchedTokens {
+		documentIDs[i] = d.DocumentID
 	}
 
-	// Check how many Document found, and how many token found per document.
+	documentContents, err := GetDocuments(db, documentIDs...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Final step
+	// For every document with matched tokens, apply content to it, and group
+	// the token by its query index.
+	finalDocuments = make([]MatchedDocument, 0, len(documentsWithMatchedTokens))
+	for _, dwmt := range documentsWithMatchedTokens {
+		doc, exist := documentContents[dwmt.DocumentID]
+		if !exist {
+			continue
+		}
+
+		tokenGroups := groupTokensByQueryIndex(dwmt.Tokens, nQueryTokens)
+		finalDocuments = append(finalDocuments, MatchedDocument{
+			Document:    doc,
+			TokenGroups: tokenGroups,
+		})
+	}
+
+	return
+}
+
+// Group the document tokens by document id. While on it, also saves the token
+// index from query.
+func groupTokensByDocument(
+	documentTokens []DocumentToken,
+	nQueryTokens int,
+	tokenQueryIndexes map[string][]int,
+) []DocumentWithTokens {
+	// Check how many Documents are there, and how many tokens per document.
 	// Will be used later for allocating slice.
-	mapDocumentTokenCount := make(map[int]int)
-	for _, match := range matchedTokens {
-		mapDocumentTokenCount[match.DocumentID]++
+	tokensPerDocument := make(map[int]int)
+	for _, token := range documentTokens {
+		tokensPerDocument[token.DocumentID]++
 	}
 
-	// Group the tokens by Document
-	matchedDocuments = make([]MatchedDocument, 0, len(mapDocumentTokenCount))
+	// Prepare variable to store result
+	documents := make([]DocumentWithTokens, 0, len(tokensPerDocument))
 
 	currentDocID := -1
-	currentDocLastQueryIndex := len(queryTokens)
-	var currentDocTokenCount int
-	var currentDocument MatchedDocument
+	currentDocLastQueryIndex := nQueryTokens
+	var currentDocument DocumentWithTokens
 
-	for _, token := range matchedTokens {
+	for _, token := range documentTokens {
+		// If document is changed, save current to list
 		if token.DocumentID != currentDocID {
-			// If document is changed, save current to list
 			if len(currentDocument.Tokens) > 0 {
-				matchedDocuments = append(matchedDocuments, currentDocument)
+				documents = append(documents, currentDocument)
 			}
 
 			// Reset current document
 			currentDocID = token.DocumentID
-			currentDocTokenCount = mapDocumentTokenCount[currentDocID]
-			currentDocLastQueryIndex = len(queryTokens)
+			currentDocLastQueryIndex = nQueryTokens
 
-			currentDocument = MatchedDocument{
+			nTokensInDocument := tokensPerDocument[currentDocID]
+			currentDocument = DocumentWithTokens{
 				DocumentID: currentDocID,
-				Tokens:     make([]DocumentToken, 0, currentDocTokenCount),
+				Tokens:     make([]DocumentToken, 0, nTokensInDocument),
 			}
 		}
 
-		// Save the token to document, while applying index from query
+		// Save the token to document, while applying query's token index
 		currentDocLastQueryIndex = firstLarger(
 			currentDocLastQueryIndex,
-			mapTokenQueryIndexes[token.Token])
+			tokenQueryIndexes[token.Token],
+		)
 
 		token.IndexInQuery = currentDocLastQueryIndex
 		currentDocument.Tokens = append(currentDocument.Tokens, token)
@@ -135,10 +189,57 @@ func GetDocumentTokens(db *sqlx.DB, queryTokens ...string) (matchedDocuments []M
 
 	// Save the trailing documents
 	if len(currentDocument.Tokens) > 0 {
-		matchedDocuments = append(matchedDocuments, currentDocument)
+		documents = append(documents, currentDocument)
 	}
 
-	return
+	return documents
+}
+
+// For each document, group its tokens by token's query index. For example, let's
+// say we have bigram tokens like this (top is token text, bottom is index of
+// that token in the query)
+//
+// ["at", "la", "ka", "at", "ma", "ma", "al", "la", "ka", "at", "ak", "ak"]
+// [   5,    2,    4,    5,    0,    0,    1,    2,    4,    5,    3,    3]
+//
+// The expected groups are:
+//
+// 0: ["at"]
+// 1: ["la", "ka", "at"]
+// 2: ["ma"]
+// 3: ["ma", "al", "la", "ka", "at"]
+// 4: ["ak"]
+// 5: ["ak"]
+func groupTokensByQueryIndex(
+	documentTokens []DocumentToken,
+	nQueryTokens int,
+) [][]DocumentToken {
+	var tokenGroups [][]DocumentToken
+
+	maxLength := len(documentTokens)
+	var currentGroup []DocumentToken
+	currentLastQueryIndex := nQueryTokens
+
+	for _, token := range documentTokens {
+		// If query index smaller than the last, save current group to list
+		if token.IndexInQuery <= currentLastQueryIndex {
+			if len(currentGroup) > 0 {
+				tokenGroups = append(tokenGroups, currentGroup)
+			}
+			currentGroup = make([]DocumentToken, 0, maxLength)
+		}
+
+		// Save the token to current group
+		currentLastQueryIndex = token.IndexInQuery
+		currentGroup = append(currentGroup, token)
+	}
+
+	// Save the trailing group
+	if len(currentGroup) > 0 {
+		tokenGroups = append(tokenGroups, currentGroup)
+	}
+
+	return tokenGroups
 }
 
 func firstLarger(a int, numbers []int) int {

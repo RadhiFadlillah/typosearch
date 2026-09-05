@@ -25,11 +25,20 @@ type MatchedDocument struct {
 	Document
 	// Score is confidence level for this [Document].
 	Score float64
-	// Positions is list of position of matched keyword inside Document. Represented
+	// Markers is list of rune-based marker position inside Document. Represented
 	// as 2-tuple of `[start, end]`.
-	Positions [][2]int
+	Markers [][2]int
+	// WordMarkers is list of word-based marker position inside Document. Represented
+	// as 2-tuple of `[start, end]`.
+	WordMarkers [][2]int
 	// dbID is private field to represent Document IDs (not identifier) in database
 	dbID int
+}
+
+// _ScoredTokenGroup is internal object to track score for a token group.
+type _ScoredTokenGroup struct {
+	Tokens []database.DocumentToken
+	Score  float64
 }
 
 // Storage is the container for storing trigram indexes for documents that will be
@@ -112,9 +121,9 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		tokenStrings[i] = token.String()
 	}
 
-	// Fetch list of matching document tokens from database
+	// Fetch list of matching documents from database
 	nQueryToken := len(tokenStrings)
-	documents, err := database.GetDocumentTokens(s.db, tokenStrings...)
+	documents, err := database.GetDocumentsByTokens(s.db, tokenStrings...)
 	if err != nil {
 		return nil, err
 	}
@@ -129,81 +138,32 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		scoreThreshold = 0.5
 	}
 
-	// Process each document
-	type ScoredTokens struct {
-		Tokens []database.DocumentToken
-		Score  float64
-	}
-
+	// Create scores for each document
 	searchResults := make([]MatchedDocument, 0, len(documents))
+
 	for _, doc := range documents {
-		// Group tokens by checking its index in query. For example, we have this
-		// bigram token (top is token text, bottom is index of that token in query)
-		//
-		// ["at", "la", "ka", "at", "ma", "ma", "al", "la", "ka", "at", "ak", "ak"]
-		// [   5,    2,    4,    5,    0,    0,    1,    2,    4,    5,    3,    3]
-		//
-		// The expected groups are:
-		//
-		// 0: ["at"]
-		// 1: ["la", "ka", "at"]
-		// 2: ["ma"]
-		// 3: ["ma", "al", "la", "ka", "at"]
-		// 4: ["ak"]
-		// 5: ["ak"]
-
-		// Initiate variables and helper function
-		var tokenGroups []ScoredTokens
-		var currentGroup []database.DocumentToken
-		currentLastQueryIndex := nQueryToken
-
-		saveCurrentGroup := func() {
-			// Make sure current group not empty
-			groupSize := len(currentGroup)
-			if groupSize == 0 {
-				return
-			}
-
-			// Calc score of this group
-			positions := make([]int, groupSize)
-			for i := range positions {
-				positions[i] = currentGroup[i].Start
-			}
-
-			compactness := calcCompactness(positions)
-			completeness := calcCompleteness(groupSize, nQueryToken)
+		// Score each token group
+		tokenGroups := make([]_ScoredTokenGroup, 0, len(doc.TokenGroups))
+		for _, tg := range doc.TokenGroups {
+			compactness := calcCompactness(tg)
+			completeness := calcCompleteness(len(tg), nQueryToken)
 			score := compactness * completeness
 
 			// If the score is good enough, save it
 			if score >= 0.5 {
-				tokenGroups = append(tokenGroups, ScoredTokens{
-					Tokens: currentGroup,
+				tokenGroups = append(tokenGroups, _ScoredTokenGroup{
+					Tokens: tg,
 					Score:  score,
 				})
 			}
 		}
 
-		// Process each token in this document
-		for _, token := range doc.Tokens {
-			if token.IndexInQuery <= currentLastQueryIndex {
-				saveCurrentGroup()
-				currentGroup = make([]database.DocumentToken, 0)
-			}
-
-			currentLastQueryIndex = token.IndexInQuery
-			currentGroup = append(currentGroup, token)
-		}
-
-		// Save any trailing group
-		saveCurrentGroup()
-
-		// If there are no match, continue to next document
-		nTokenGroup := len(tokenGroups)
-		if nTokenGroup == 0 {
+		// If there are no good enough group, continue to next document
+		if len(tokenGroups) == 0 {
 			continue
 		}
 
-		// Sort the token groups by best score
+		// Sort the token groups by the best score
 		sort.Slice(tokenGroups, func(i, j int) bool {
 			if tokenGroups[i].Score != tokenGroups[j].Score {
 				return tokenGroups[i].Score > tokenGroups[j].Score
@@ -211,52 +171,31 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 			return len(tokenGroups[i].Tokens) > len(tokenGroups[j].Tokens)
 		})
 
-		// Create combined score using formula:
-		// score = top_score + (1 - top_score) * leftover_scores * alpha
-		//
-		// - top_score is the base, we just want the leftover to reward the top_score
-		//   so the leftover are not useless
-		// - (1 - top_score) is how much can we add to the base score
-		// - leftover_scores is a normalized weighted sum of the leftover
-		// - alpha is how much the leftover_scores affect the top_score
-		combinedScore := tokenGroups[0].Score
-
-		if nTokenGroup > 1 {
-			alpha := 0.3
-			decay := 0.5
-			topScore := tokenGroups[0].Score
-
-			var weightedSum, sumOfWeight float64
-			for i := 1; i < len(tokenGroups); i++ {
-				score := tokenGroups[i].Score
-				weight := math.Pow(decay, float64(i-1))
-				weightedSum += score * weight
-				sumOfWeight += weight
-			}
-
-			leftoverScores := weightedSum / sumOfWeight
-			combinedScore = topScore + (1-topScore)*leftoverScores*alpha
-		}
-
-		// Check if combined score passed the threshold
-		if combinedScore <= s.threshold {
+		// Calc combined score and check if it pass
+		combinedScore := calcCombinedScore(tokenGroups)
+		if combinedScore <= scoreThreshold {
 			continue
 		}
 
-		// Convert token groups into positions
-		positions := make([][2]int, len(tokenGroups))
+		// Convert token groups into marker positions
+		markers := make([][2]int, len(tokenGroups))
 		for i := range tokenGroups {
 			tokens := tokenGroups[i].Tokens
 			start := tokens[0].Start
 			end := tokens[len(tokens)-1].End
-			positions[i] = [2]int{start, end}
+			markers[i] = [2]int{start, end}
 		}
+
+		// Convert rune-based markers into word-based markers
+		wordMarkers := snapMarkersToWordBoundaries([]rune(doc.Content), markers)
 
 		// Save the result
 		searchResults = append(searchResults, MatchedDocument{
-			Score:     combinedScore,
-			Positions: positions,
-			dbID:      doc.DocumentID,
+			ID:          doc.Identifier,
+			Content:     doc.Content,
+			Score:       combinedScore,
+			Markers:     markers,
+			WordMarkers: wordMarkers,
 		})
 	}
 
@@ -265,42 +204,18 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		return nil, nil
 	}
 
-	// Fetch content for search result
-	dbIDs := make([]int, len(searchResults))
-	for i, sr := range searchResults {
-		dbIDs[i] = sr.dbID
-	}
-
-	dbDocs, err := database.GetDocuments(s.db, dbIDs...)
-	if err != nil {
-		return nil, err
-	}
-
-	// Apply content to search result
-	finalResults := make([]MatchedDocument, 0, len(searchResults))
-	for _, sr := range searchResults {
-		if dbDoc, exist := dbDocs[sr.dbID]; exist {
-			sr.Document = Document{
-				ID:      dbDoc.Identifier,
-				Content: dbDoc.Content,
-			}
-
-			finalResults = append(finalResults, sr)
-		}
-	}
-
 	// Sort the search result
-	sort.Slice(finalResults, func(i, j int) bool {
+	sort.Slice(searchResults, func(i, j int) bool {
 		// By best score
-		fr1 := finalResults[i]
-		fr2 := finalResults[j]
+		fr1 := searchResults[i]
+		fr2 := searchResults[j]
 		if fr1.Score != fr2.Score {
 			return fr1.Score > fr2.Score
 		}
 
 		// By most group counts
-		n1 := len(fr1.Positions)
-		n2 := len(fr2.Positions)
+		n1 := len(fr1.Markers)
+		n2 := len(fr2.Markers)
 		if n1 != n2 {
 			return n1 > n2
 		}
@@ -308,7 +223,7 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		return fr1.ID < fr2.ID
 	})
 
-	return finalResults, nil
+	return searchResults, nil
 }
 
 func calcCompleteness(currentCount, expectedCount int) float64 {
@@ -318,17 +233,23 @@ func calcCompleteness(currentCount, expectedCount int) float64 {
 	return 3*math.Pow(score, 2) - 2*math.Pow(score, 3)
 }
 
-func calcCompactness(positions []int) float64 {
+func calcCompactness(documentTokens []database.DocumentToken) float64 {
 	// Handle edge cases: empty positions or single element
 	// Single elements have no gaps, so they're perfectly compact
-	nPosition := len(positions)
-	if nPosition <= 1 {
+	nTokens := len(documentTokens)
+	if nTokens <= 1 {
 		return 1.0
 	}
 
-	// Calculate gaps average
+	// Get position from this tokens
+	positions := make([]int, len(documentTokens))
+	for i := range positions {
+		positions[i] = documentTokens[i].Start
+	}
+
+	// Calculate sum of gaps
 	var gapSum int
-	nGap := nPosition - 1
+	nGap := nTokens - 1
 	for i := range nGap {
 		gapSum += positions[i+1] - positions[i]
 	}
@@ -342,4 +263,35 @@ func calcCompactness(positions []int) float64 {
 	// Calculate compactness by comparing the mean with ideal gap value. Ideally,
 	// gap between token position is at most 3 (since we use trigram).
 	return min(1, 3.0/mean)
+}
+
+// Create combined score using formula:
+// score = top_score + (1 - top_score) * leftover_scores * alpha
+//
+//   - top_score is the base, we just want the leftover to reward the top_score
+//     so the leftover are not useless
+//   - (1 - top_score) is how much can we add to the base score
+//   - leftover_scores is a normalized weighted sum of the leftover
+//   - alpha is how much the leftover_scores affect the top_score
+func calcCombinedScore(tokenGroups []_ScoredTokenGroup) float64 {
+	combinedScore := tokenGroups[0].Score
+
+	if len(tokenGroups) > 1 {
+		alpha := 0.3
+		decay := 0.5
+		topScore := tokenGroups[0].Score
+
+		var weightedSum, sumOfWeight float64
+		for i := 1; i < len(tokenGroups); i++ {
+			score := tokenGroups[i].Score
+			weight := math.Pow(decay, float64(i-1))
+			weightedSum += score * weight
+			sumOfWeight += weight
+		}
+
+		leftoverScores := weightedSum / sumOfWeight
+		combinedScore = topScore + (1-topScore)*leftoverScores*alpha
+	}
+
+	return combinedScore
 }
