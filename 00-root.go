@@ -173,7 +173,7 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 
 		// Calc combined score and check if it pass
 		combinedScore := calcCombinedScore(tokenGroups)
-		if combinedScore <= scoreThreshold {
+		if combinedScore < scoreThreshold {
 			continue
 		}
 
