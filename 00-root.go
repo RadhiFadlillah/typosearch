@@ -43,6 +43,19 @@ type _ScoredTokenGroup struct {
 	WordMarker [2]int
 }
 
+// Config is the configuration for this search engine.
+type Config struct {
+	// Processor is function to process a rune into another rune(s). The result also
+	// can be an empty slice, if that rune is supposed to be removed.
+	//
+	// This processor later will be used on the submitted [Document], but won't be
+	// used on user queries. For user queries, developer responsible to process it
+	// themselves.
+	Processor Processor
+	// Threshold is the minimum confidence score for search result.
+	Threshold float64
+}
+
 // Storage is the container for storing trigram indexes for documents that will be
 // searched later. Use sqlite3 as database engine.
 type Storage struct {
@@ -52,27 +65,23 @@ type Storage struct {
 }
 
 // Open the search storage in the specified path.
-func OpenStorage(path string) (*Storage, error) {
+func OpenStorage(path string, cfg Config) (*Storage, error) {
 	db, err := database.Open(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Storage{db: db}, nil
+	return &Storage{
+		db:        db,
+		processor: cfg.Processor,
+		threshold: cfg.Threshold,
+	}, nil
 }
 
-// Apply [Processor] function to the [Storage]. This processor later will be used
-// on the submitted [Document], but won't be used on user queries. For user queries,
-// developer responsible to normalize it themselves. This processor is not saved
-// inside Storage, so make sure to re-apply it whenever you open the storage.
-func (s *Storage) ApplyProcessor(processor Processor) *Storage {
-	s.processor = processor
-	return s
-}
-
-// Apply confidence threshold for this [Storage].
-func (s *Storage) ApplyThreshold(score float64) *Storage {
-	s.threshold = score
+// ApplyConfig applies the [Config] to the [Storage].
+func (s *Storage) ApplyConfig(cfg Config) *Storage {
+	s.processor = cfg.Processor
+	s.threshold = cfg.Threshold
 	return s
 }
 
