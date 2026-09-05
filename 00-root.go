@@ -61,10 +61,10 @@ func OpenStorage(path string) (*Storage, error) {
 	return &Storage{db: db}, nil
 }
 
-// Apply one or more [Processor] function to the [Storage]. These processors later
-// will be used on the submitted [Document] and on search queries. These processors
-// are not saved inside Storage, so make sure to re-apply it whenever you open the
-// storage.
+// Apply [Processor] function to the [Storage]. This processor later will be used
+// on the submitted [Document], but won't be used on user queries. For user queries,
+// developer responsible to normalize it themselves. This processor is not saved
+// inside Storage, so make sure to re-apply it whenever you open the storage.
 func (s *Storage) ApplyProcessor(processor Processor) *Storage {
 	s.processor = processor
 	return s
@@ -106,7 +106,8 @@ func (st *Storage) DeleteDocuments(ids ...string) error {
 
 // Search the storage for suitable documents. The returned documents will have its
 // content normalized in NFD format. If users need NFC, they need to normalize it
-// themselves using norm.NFC.
+// themselves using norm.NFC. Developer should normalize the query before submitting
+// it to this function.
 func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 	// Clear up spaces from query
 	query = strings.Join(strings.Fields(query), " ")
@@ -114,8 +115,9 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		return nil, nil
 	}
 
-	// Convert the query into tokens
-	queryTokens, query := tokenizer.Tokenize(query, s.processor)
+	// Convert the query into tokens. Notice we don't pass any processor.
+	// Developer should normalize the query before submitting it to this function.
+	queryTokens, query := tokenizer.Tokenize(query, nil)
 	queryLength := len(queryTokens) + 3 - 1 // it was in trigram, so we revert it
 
 	// Convert tokens into strings
