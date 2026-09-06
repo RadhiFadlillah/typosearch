@@ -91,4 +91,5 @@ CREATE TABLE IF NOT EXISTS document_token (
 )`
 
 const ddlCreateDocumentTokenIndexToken = `
-CREATE INDEX IF NOT EXISTS document_token_idx_token ON document_token (token)`
+CREATE INDEX IF NOT EXISTS document_token_idx_covering
+ON document_token (token, document_id, start, end)`

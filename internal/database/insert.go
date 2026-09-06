@@ -23,7 +23,7 @@ func InsertDocuments(db *sqlx.DB, processor func(r rune) []rune, args []InsertDo
 	}
 
 	// Remove index, and create it once it over
-	_, err = db.Exec(`DROP INDEX IF EXISTS document_token_idx_token`)
+	_, err = db.Exec(`DROP INDEX IF EXISTS document_token_idx_covering`)
 	if err != nil {
 		return
 	}
@@ -43,9 +43,7 @@ func InsertDocuments(db *sqlx.DB, processor func(r rune) []rune, args []InsertDo
 
 		// Recreate index
 		if err == nil {
-			_, err = db.Exec(`
-				CREATE INDEX IF NOT EXISTS document_token_idx_token
-				ON document_token (token)`)
+			_, err = db.Exec(ddlCreateDocumentTokenIndexToken)
 		}
 	}()
 

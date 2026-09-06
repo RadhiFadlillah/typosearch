@@ -44,8 +44,7 @@ func GetDocuments(db *sqlx.DB, ids ...int) (docs map[int]Document, err error) {
 	stmt, args, err := sqlx.In(`
 		SELECT id, identifier, content
 		FROM document
-		WHERE id IN (?)
-		ORDER BY id ASC`, ids)
+		WHERE id IN (?)`, ids)
 	if err != nil {
 		return
 	}
