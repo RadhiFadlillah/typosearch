@@ -2,7 +2,6 @@ package typosearch
 
 import (
 	"math"
-	"slices"
 	"sort"
 	"strings"
 
@@ -166,9 +165,9 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 			// Do coverage scoring for quick check, using geometric mean
 			precision := calcCompactness(tg)                 // did we get unneeded stuff?
 			recall := calcCompleteness(len(tg), nQueryToken) // did we capture everything?
-			coverage := math.Pow(precision, 0.5) * math.Pow(recall, 0.5)
+			coverage := precision * recall
 
-			// If the quick score is too bad, skip it
+			// If the coverage is too bad, skip it
 			if coverage < 0.5 {
 				continue
 			}
@@ -184,14 +183,20 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 			processedRunes, processedText := tokenizer.ProcessRunes(tgRunes, s.processor)
 			editDistance := smetrics.Ukkonen(query, processedText, 1, 1, 1)
 
-			// Calculate accuracy using edit distance, then use it as confidence level
+			// Calculate accuracy using edit distance
 			maxLength := max(queryLength, len(processedRunes))
 			accuracy := 1.0 - float64(editDistance)/float64(maxLength)
+
+			// Calculate confidence score using coverage, then reward its accuracy
+			score := coverage + (1-coverage)*0.5*accuracy
+			if score < scoreThreshold {
+				continue
+			}
 
 			// Save the group
 			tokenGroups = append(tokenGroups, _ScoredTokenGroup{
 				Tokens:     tg,
-				Score:      accuracy,
+				Score:      score,
 				Marker:     marker,
 				WordMarker: wordMarker,
 			})
@@ -217,11 +222,8 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 			return len(tg1.Tokens) > len(tg2.Tokens)
 		})
 
-		// Calc combined score and check if it pass
+		// Calc combined score
 		combinedScore := calcCombinedScore(tokenGroups)
-		if combinedScore < scoreThreshold {
-			continue
-		}
 
 		// Extract markers
 		markers := make([][2]int, nTokenGroups)
@@ -283,8 +285,8 @@ func calcCompactness(documentTokens []database.DocumentToken) float64 {
 		return 1.0
 	}
 
-	// Get position from this tokens
-	positions := make([]int, len(documentTokens))
+	// Get position in document from these tokens
+	positions := make([]int, nTokens)
 	for i := range positions {
 		positions[i] = documentTokens[i].Start
 	}
@@ -303,7 +305,8 @@ func calcCompactness(documentTokens []database.DocumentToken) float64 {
 	}
 
 	// Calculate compactness by comparing the mean with ideal gap value. Ideally,
-	// gap between token position is at most 3 (since we use trigram).
+	// gap between token position is at most 3 (since we use trigram, so gap of 3
+	// means we only miss one token).
 	return min(1, 3.0/mean)
 }
 
@@ -316,22 +319,16 @@ func calcCompactness(documentTokens []database.DocumentToken) float64 {
 //   - leftover_scores is a normalized weighted sum of the leftover
 //   - alpha is how much the leftover_scores affect the top_score
 func calcCombinedScore(tokenGroups []_ScoredTokenGroup) float64 {
-	scores := make([]float64, len(tokenGroups))
-	for i, tg := range tokenGroups {
-		scores[i] = tg.Score
-	}
+	combinedScore := tokenGroups[0].Score
 
-	slices.Sort(scores)
-	combinedScore := scores[0]
-
-	if len(scores) > 1 {
+	if len(tokenGroups) > 1 {
 		alpha := 0.3
 		decay := 0.5
-		topScore := scores[0]
+		topScore := tokenGroups[0].Score
 
 		var weightedSum, sumOfWeight float64
-		for i := 1; i < len(scores); i++ {
-			score := scores[i]
+		for i := 1; i < len(tokenGroups); i++ {
+			score := tokenGroups[i].Score
 			weight := math.Pow(decay, float64(i-1))
 			weightedSum += score * weight
 			sumOfWeight += weight
