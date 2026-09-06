@@ -156,8 +156,7 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 	searchResults := make([]MatchedDocument, 0, len(documents))
 
 	for _, doc := range documents {
-		// Extract content of doc
-		docContent := []rune(doc.Content)
+		var docContent []rune
 
 		// Score each token group
 		tokenGroups := make([]_ScoredTokenGroup, 0, len(doc.TokenGroups))
@@ -171,6 +170,11 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 			// If the coverage is too bad, skip it
 			if coverage < 0.5 {
 				continue
+			}
+
+			// We need doc content, so cast it to runes now
+			if docContent == nil {
+				docContent = []rune(doc.Content)
 			}
 
 			// Create marker for this group
