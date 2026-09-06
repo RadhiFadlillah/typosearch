@@ -2,7 +2,6 @@ package typosearch
 
 import (
 	"cmp"
-	"math"
 	"slices"
 	"strings"
 
@@ -275,7 +274,7 @@ func calcCompleteness(currentCount, expectedCount int) float64 {
 	// Penalize when completeness is too small.
 	// Use formula 3s^2 - 2s^3 so score < 0.5 is penalized smoothly.
 	score := float64(currentCount) / float64(expectedCount)
-	return 3*math.Pow(score, 2) - 2*math.Pow(score, 3)
+	return 3*score*score - 2*score*score*score
 }
 
 func calcCompactness(documentTokens []database.DocumentToken) float64 {
@@ -327,12 +326,13 @@ func calcCombinedScore(tokenGroups []_ScoredTokenGroup) float64 {
 		decay := 0.5
 		topScore := tokenGroups[0].Score
 
+		weight := 1.0
 		var weightedSum, sumOfWeight float64
 		for i := 1; i < len(tokenGroups); i++ {
 			score := tokenGroups[i].Score
-			weight := math.Pow(decay, float64(i-1))
 			weightedSum += score * weight
 			sumOfWeight += weight
+			weight *= decay
 		}
 
 		leftoverScores := weightedSum / sumOfWeight
