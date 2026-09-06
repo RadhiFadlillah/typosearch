@@ -2,6 +2,7 @@ package typosearch
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -15,8 +16,8 @@ import (
 
 // Document is the text document that will be indexed to be later searched on.
 type Document struct {
-	// ID is the unique identifier for this Document.
-	ID string
+	// Identifier is the unique identifier for this Document.
+	Identifier string
 	// Content is the text body of this Document.
 	Content string
 }
@@ -32,6 +33,12 @@ type MatchedDocument struct {
 	WordMarkers [][2]int
 	// Score is confidence level for this [Document].
 	Score float64
+}
+
+// _MatchCandidate is internal object to track a match candidate.
+type _MatchCandidate struct {
+	ID          int
+	TokenGroups []_ScoredTokenGroup
 }
 
 // _ScoredTokenGroup is internal object to track score for a token group.
@@ -99,7 +106,7 @@ func (s *Storage) AddDocuments(docs ...Document) error {
 	dbDocs := make([]database.InsertDocumentArg, len(docs))
 	for i, doc := range docs {
 		dbDocs[i] = database.InsertDocumentArg{
-			Identifier: doc.ID,
+			Identifier: doc.Identifier,
 			Content:    doc.Content,
 		}
 	}
@@ -123,10 +130,9 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		return nil, nil
 	}
 
-	// Convert the query into tokens. Notice we don't pass any processor.
-	// Developer should normalize the query before submitting it to this function.
+	// Convert the query into tokens. Notice we don't pass any processor. Developer
+	// should normalize the query before submitting it to this search function.
 	queryTokens, query := tokenizer.Tokenize(query, nil)
-	queryLength := len(queryTokens) + 3 - 1 // it was in trigram, so we revert it
 
 	// Convert tokens into strings
 	tokenStrings := make([]string, len(queryTokens))
@@ -134,15 +140,91 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		tokenStrings[i] = token.String()
 	}
 
-	// Fetch list of matching documents from database
+	// Fetch list of matching candidates from database
 	nQueryToken := len(tokenStrings)
-	documents, err := database.GetDocumentsByTokens(s.db, tokenStrings...)
+	candidates, err := database.GetDocumentsByTokens(s.db, tokenStrings...)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(documents) == 0 {
+	if len(candidates) == 0 {
 		return nil, nil
+	}
+
+	// 1st layer: filter by coverage (precision + recall)
+	goodCandidates := s.filterInitialCandidates(candidates, nQueryToken)
+
+	// 2nd layer: filter by accuracy and combined score
+	return s.filterGoodCandidates(goodCandidates, query)
+}
+
+func (s Storage) filterInitialCandidates(
+	candidates []database.DocumentWithTokensGroups,
+	nQueryToken int,
+) []_MatchCandidate {
+	// Prepare variable to store result
+	goodCandidates := make([]_MatchCandidate, 0, len(candidates))
+
+	for _, candidate := range candidates {
+		// Score each token group
+		tokenGroups := make([]_ScoredTokenGroup, 0, len(candidate.TokenGroups))
+
+		for _, tg := range candidate.TokenGroups {
+			// Do coverage scoring for quick check, using geometric mean
+			precision := s.calcCompactness(tg)                 // did we get unneeded stuff?
+			recall := s.calcCompleteness(len(tg), nQueryToken) // did we capture everything?
+			coverage := precision * recall
+
+			// If the coverage is not good, skip it
+			if coverage < 0.5 {
+				continue
+			}
+
+			// Create marker for this group
+			start := tg[0].Start
+			end := tg[len(tg)-1].End
+			marker := [2]int{start, end}
+
+			// Save the group
+			tokenGroups = append(tokenGroups, _ScoredTokenGroup{
+				Tokens:     tg,
+				Score:      coverage, // for now we only use coverage
+				Marker:     marker,
+				WordMarker: [2]int{}, // we will calculate them in 2nd filter
+			})
+		}
+
+		// If there are no decent group, continue to next candidate
+		nTokenGroups := len(tokenGroups)
+		if nTokenGroups == 0 {
+			continue
+		}
+
+		// Save the good candidate
+		goodCandidates = append(goodCandidates, _MatchCandidate{
+			ID:          candidate.DocumentID,
+			TokenGroups: tokenGroups,
+		})
+	}
+
+	return goodCandidates
+}
+
+func (s Storage) filterGoodCandidates(
+	goodCandidates []_MatchCandidate,
+	query string,
+) ([]MatchedDocument, error) {
+	// Get content for the candidates, since we need it to measure accuracy
+	documentIDs := make([]int, len(goodCandidates))
+	for i, candidate := range goodCandidates {
+		documentIDs[i] = candidate.ID
+	}
+
+	fmt.Printf("BUT THE GOOD ONES ARE ONLY %d CANDIDATES\n", len(documentIDs))
+
+	documents, err := database.GetDocuments(s.db, documentIDs...)
+	if err != nil {
+		return nil, err
 	}
 
 	// Prepare default confidence threshold
@@ -151,82 +233,64 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		scoreThreshold = 0.5
 	}
 
-	// Create scores for each document
-	searchResults := make([]MatchedDocument, 0, len(documents))
+	// Create scores for each candidate
+	searchResults := make([]MatchedDocument, 0, len(goodCandidates))
 
-	for _, doc := range documents {
-		var docContent []rune
+	for _, candidate := range goodCandidates {
+		// Make sure candidate's content was found
+		doc, exist := documents[candidate.ID]
+		if !exist {
+			continue
+		}
+
+		// Cast content to []rune
+		content := []rune(doc.Content)
 
 		// Score each token group
-		tokenGroups := make([]_ScoredTokenGroup, 0, len(doc.TokenGroups))
+		tokenGroups := make([]_ScoredTokenGroup, 0, len(candidate.TokenGroups))
 
-		for _, tg := range doc.TokenGroups {
-			// Do coverage scoring for quick check, using geometric mean
-			precision := calcCompactness(tg)                 // did we get unneeded stuff?
-			recall := calcCompleteness(len(tg), nQueryToken) // did we capture everything?
-			coverage := precision * recall
-
-			// If the coverage is too bad, skip it
-			if coverage < 0.5 {
-				continue
-			}
-
-			// We need doc content, so cast it to runes now
-			if docContent == nil {
-				docContent = []rune(doc.Content)
-			}
-
-			// Create marker for this group
-			start := tg[0].Start
-			end := tg[len(tg)-1].End
-			marker := [2]int{start, end}
-			wordMarker := snapMarkerToWordBoundaries(docContent, marker)
+		for _, tg := range candidate.TokenGroups {
+			// Create word marker using marker that already created before
+			tg.WordMarker = snapMarkerToWordBoundaries(content, tg.Marker)
 
 			// Check edit distance for this group
-			tgRunes := docContent[wordMarker[0]:wordMarker[1]]
-			processedRunes, processedText := tokenizer.ProcessRunes(tgRunes, s.processor)
+			tgRunes := content[tg.WordMarker[0]:tg.WordMarker[1]]
+			_, processedText := tokenizer.ProcessRunes(tgRunes, s.processor)
 			editDistance := smetrics.Ukkonen(query, processedText, 1, 1, 1)
 
 			// Calculate accuracy using edit distance
-			maxLength := max(queryLength, len(processedRunes))
+			maxLength := max(len(query), len(processedText))
 			accuracy := 1.0 - float64(editDistance)/float64(maxLength)
 
 			// Slightly reward accuracy where marker already located in word
-			if marker[0] == wordMarker[0] && marker[1] == wordMarker[1] {
+			if tg.Marker[0] == tg.WordMarker[0] && tg.Marker[1] == tg.WordMarker[1] {
 				accuracy += (1 - accuracy) * 0.2
 			}
 
 			// Calculate confidence score using coverage, then reward its accuracy
-			score := coverage + (1-coverage)*0.5*accuracy
-			if score < scoreThreshold {
+			coverage := tg.Score // from before
+			tg.Score = coverage + (1-coverage)*0.5*accuracy
+			if tg.Score < scoreThreshold {
 				continue
 			}
 
 			// Save the group
-			tokenGroups = append(tokenGroups, _ScoredTokenGroup{
-				Tokens:     tg,
-				Score:      score,
-				Marker:     marker,
-				WordMarker: wordMarker,
-			})
+			tokenGroups = append(tokenGroups, tg)
 		}
 
-		// If there are no good enough group, continue to next document
+		// If there are no decent group, continue to next candidate
 		nTokenGroups := len(tokenGroups)
 		if nTokenGroups == 0 {
 			continue
 		}
 
-		// Sort the token groups
+		// Sort the token groups by best score
 		slices.SortFunc(tokenGroups, func(tg1, tg2 _ScoredTokenGroup) int {
 			if tg1.Score != tg2.Score {
 				return -cmp.Compare(tg1.Score, tg2.Score) // tg1 > tg2
 			}
 			return -cmp.Compare(len(tg1.Tokens), len(tg2.Tokens)) // tg1 > tg2
 		})
-
-		// Calc combined score
-		combinedScore := calcCombinedScore(tokenGroups)
 
 		// Extract markers
 		markers := make([][2]int, nTokenGroups)
@@ -238,11 +302,11 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 
 		// Save the result
 		searchResults = append(searchResults, MatchedDocument{
-			ID:          doc.Identifier,
+			Identifier:  doc.Identifier,
 			Content:     doc.Content,
 			Markers:     markers,
 			WordMarkers: wordMarkers,
-			Score:       combinedScore,
+			Score:       s.calcCombinedScore(tokenGroups),
 		})
 	}
 
@@ -264,20 +328,20 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		}
 
 		// By identifier
-		return cmp.Compare(sr1.ID, sr2.ID)
+		return cmp.Compare(sr1.Identifier, sr2.Identifier)
 	})
 
 	return searchResults, nil
 }
 
-func calcCompleteness(currentCount, expectedCount int) float64 {
+func (s Storage) calcCompleteness(currentCount, expectedCount int) float64 {
 	// Penalize when completeness is too small.
 	// Use formula 3s^2 - 2s^3 so score < 0.5 is penalized smoothly.
 	score := float64(currentCount) / float64(expectedCount)
 	return 3*score*score - 2*score*score*score
 }
 
-func calcCompactness(documentTokens []database.DocumentToken) float64 {
+func (s Storage) calcCompactness(documentTokens []database.DocumentToken) float64 {
 	// Handle edge cases: empty positions or single element
 	// Single elements have no gaps, so they're perfectly compact
 	nTokens := len(documentTokens)
@@ -318,7 +382,7 @@ func calcCompactness(documentTokens []database.DocumentToken) float64 {
 //   - (1 - top_score) is how much can we add to the base score
 //   - leftover_scores is a normalized weighted sum of the leftover
 //   - alpha is how much the leftover_scores affect the top_score
-func calcCombinedScore(tokenGroups []_ScoredTokenGroup) float64 {
+func (s Storage) calcCombinedScore(tokenGroups []_ScoredTokenGroup) float64 {
 	combinedScore := tokenGroups[0].Score
 
 	if len(tokenGroups) > 1 {

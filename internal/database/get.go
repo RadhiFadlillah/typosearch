@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"fmt"
 	"sort"
 
 	"github.com/jmoiron/sqlx"
@@ -31,9 +32,10 @@ type DocumentWithTokens struct {
 	Tokens     []DocumentToken
 }
 
-// MatchedDocument represent list of Document that matched token search.
-type MatchedDocument struct {
-	Document
+// DocumentWithTokensGroups represent Document and its matching tokens, grouped by
+// query indexes.
+type DocumentWithTokensGroups struct {
+	DocumentID  int
 	TokenGroups [][]DocumentToken
 }
 
@@ -67,7 +69,7 @@ func GetDocuments(db *sqlx.DB, ids ...int) (docs map[int]Document, err error) {
 
 // GetDocumentsByTokens fetch list of Documents based on the specified tokens.
 func GetDocumentsByTokens(db *sqlx.DB, queryTokens ...string) (
-	finalDocuments []MatchedDocument,
+	finalDocuments []DocumentWithTokensGroups,
 	err error,
 ) {
 	// Map each query tokens to its index. Notice here we use []int instead of int,
@@ -106,30 +108,15 @@ func GetDocumentsByTokens(db *sqlx.DB, queryTokens ...string) (
 		tokenQueryIndexes,
 	)
 
-	// Fetch the content for those documents
-	documentIDs := make([]int, len(documentsWithMatchedTokens))
-	for i, d := range documentsWithMatchedTokens {
-		documentIDs[i] = d.DocumentID
-	}
-
-	documentContents, err := GetDocuments(db, documentIDs...)
-	if err != nil {
-		return nil, err
-	}
+	fmt.Printf("WE WERE LOADING CONTENT FOR %d CANDIDATES\n", len(documentsWithMatchedTokens))
 
 	// Final step
-	// For every document with matched tokens, apply content to it, and group
-	// the token by its query index.
-	finalDocuments = make([]MatchedDocument, 0, len(documentsWithMatchedTokens))
+	// For every document with matched tokens, group the token by its query index.
+	finalDocuments = make([]DocumentWithTokensGroups, 0, len(documentsWithMatchedTokens))
 	for _, dwmt := range documentsWithMatchedTokens {
-		doc, exist := documentContents[dwmt.DocumentID]
-		if !exist {
-			continue
-		}
-
 		tokenGroups := groupTokensByQueryIndex(dwmt.Tokens, nQueryTokens)
-		finalDocuments = append(finalDocuments, MatchedDocument{
-			Document:    doc,
+		finalDocuments = append(finalDocuments, DocumentWithTokensGroups{
+			DocumentID:  dwmt.DocumentID,
 			TokenGroups: tokenGroups,
 		})
 	}
