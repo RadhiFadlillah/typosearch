@@ -2,7 +2,6 @@ package typosearch
 
 import (
 	"cmp"
-	"fmt"
 	"slices"
 	"strings"
 
@@ -219,8 +218,6 @@ func (s Storage) filterGoodCandidates(
 	for i, candidate := range goodCandidates {
 		documentIDs[i] = candidate.ID
 	}
-
-	fmt.Printf("BUT THE GOOD ONES ARE ONLY %d CANDIDATES\n", len(documentIDs))
 
 	documents, err := database.GetDocuments(s.db, documentIDs...)
 	if err != nil {

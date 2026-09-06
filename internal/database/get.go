@@ -2,7 +2,6 @@ package database
 
 import (
 	"database/sql"
-	"fmt"
 	"sort"
 
 	"github.com/jmoiron/sqlx"
@@ -107,8 +106,6 @@ func GetDocumentsByTokens(db *sqlx.DB, queryTokens ...string) (
 		nQueryTokens,
 		tokenQueryIndexes,
 	)
-
-	fmt.Printf("WE WERE LOADING CONTENT FOR %d CANDIDATES\n", len(documentsWithMatchedTokens))
 
 	// Final step
 	// For every document with matched tokens, group the token by its query index.
