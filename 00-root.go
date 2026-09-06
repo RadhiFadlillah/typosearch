@@ -187,6 +187,11 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 			maxLength := max(queryLength, len(processedRunes))
 			accuracy := 1.0 - float64(editDistance)/float64(maxLength)
 
+			// Slightly reward accuracy where marker already located in word
+			if marker[0] == wordMarker[0] && marker[1] == wordMarker[1] {
+				accuracy += (1 - accuracy) * 0.2
+			}
+
 			// Calculate confidence score using coverage, then reward its accuracy
 			score := coverage + (1-coverage)*0.5*accuracy
 			if score < scoreThreshold {
