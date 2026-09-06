@@ -1,8 +1,9 @@
 package typosearch
 
 import (
+	"cmp"
 	"math"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/RadhiFadlillah/typosearch/internal/database"
@@ -214,17 +215,11 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		}
 
 		// Sort the token groups
-		sort.Slice(tokenGroups, func(i, j int) bool {
-			tg1 := tokenGroups[i]
-			tg2 := tokenGroups[j]
-
-			// Score
+		slices.SortFunc(tokenGroups, func(tg1, tg2 _ScoredTokenGroup) int {
 			if tg1.Score != tg2.Score {
-				return tg1.Score > tg2.Score
+				return -cmp.Compare(tg1.Score, tg2.Score) // tg1 > tg2
 			}
-
-			// Count of tokens
-			return len(tg1.Tokens) > len(tg2.Tokens)
+			return -cmp.Compare(len(tg1.Tokens), len(tg2.Tokens)) // tg1 > tg2
 		})
 
 		// Calc combined score
@@ -254,22 +249,19 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 	}
 
 	// Sort the search result
-	sort.Slice(searchResults, func(i, j int) bool {
-		fr1 := searchResults[i]
-		fr2 := searchResults[j]
-
+	slices.SortFunc(searchResults, func(sr1, sr2 MatchedDocument) int {
 		// By combined score
-		if fr1.Score != fr2.Score {
-			return fr1.Score > fr2.Score
+		if sr1.Score != sr2.Score {
+			return -cmp.Compare(sr1.Score, sr2.Score) // sr1 > sr2
 		}
 
 		// By match counts
-		if len(fr1.Markers) != len(fr2.Markers) {
-			return len(fr1.Markers) > len(fr2.Markers)
+		if n1, n2 := len(sr1.Markers), len(sr2.Markers); n1 != n2 {
+			return -cmp.Compare(n1, n2) // n1 > n2
 		}
 
 		// By identifier
-		return fr1.ID < fr2.ID
+		return cmp.Compare(sr1.ID, sr2.ID)
 	})
 
 	return searchResults, nil

@@ -1,8 +1,8 @@
 package typosearch
 
 import (
+	"cmp"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -24,14 +24,11 @@ func Highlight(
 
 	// Clone positions then sort
 	sortedPositions := slices.Clone(positions)
-	sort.Slice(sortedPositions, func(i, j int) bool {
-		sp1 := sortedPositions[i]
-		sp2 := sortedPositions[j]
+	slices.SortFunc(sortedPositions, func(sp1, sp2 [2]int) int {
 		if sp1[0] != sp2[0] {
-			return sp1[0] < sp2[0]
+			return cmp.Compare(sp1[0], sp2[0])
 		}
-
-		return sp1[1] < sp2[1]
+		return cmp.Compare(sp1[1], sp2[1])
 	})
 
 	// Merge any overlapping positions
