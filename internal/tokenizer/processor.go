@@ -36,29 +36,48 @@ func (prg ProcessedRuneGroup) Range() (int, int) {
 // ProcessRunes applies each processor to every rune in s and returns the resulting
 // both the processed runes and its string. Every rune is attached with its source
 // position in the original string.
-func ProcessRunes(originalRunes []rune, processor func(r rune) []rune) (ProcessedRuneGroup, string) {
-	// Apply default processor
+func ProcessRunes(
+	originalRunes []rune,
+	splitter func([]rune) [][]rune,
+	processor func(r rune) []rune,
+) ([]ProcessedRuneGroup, string) {
+	// Prepare default splitter processor
+	if splitter == nil {
+		splitter = func(r []rune) [][]rune { return [][]rune{r} }
+	}
+
 	if processor == nil {
 		processor = func(r rune) []rune { return []rune{r} }
 	}
 
-	// Prepare result
-	var sb strings.Builder
-	result := make([]ProcessedRune, 0, len(originalRunes))
+	// Run splitter
+	segments := splitter(originalRunes)
 
+	// Process each segments
 	var idx int
-	for _, r := range originalRunes {
-		for _, rr := range processor(r) {
-			sb.WriteRune(rr)
-			result = append(result, ProcessedRune{
-				R:     rr,
-				Index: idx,
-			})
+	var sb strings.Builder
+	processedSegments := make([]ProcessedRuneGroup, 0, len(segments))
+
+	for _, segment := range segments {
+		processedRunes := make([]ProcessedRune, 0, len(segment))
+
+		for _, r := range segment {
+			for _, rr := range processor(r) {
+				sb.WriteRune(rr)
+				processedRunes = append(processedRunes, ProcessedRune{
+					R:     rr,
+					Index: idx,
+				})
+			}
+
+			// Increase the index
+			idx++
 		}
 
-		// Increase the index
-		idx++
+		if len(processedRunes) > 0 {
+			processedSegments = append(processedSegments, processedRunes)
+		}
 	}
 
-	return result, sb.String()
+	return processedSegments, sb.String()
 }

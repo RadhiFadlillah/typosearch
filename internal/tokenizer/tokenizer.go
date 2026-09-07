@@ -3,16 +3,39 @@ package tokenizer
 import "slices"
 
 // Tokenize runs processor on the s, then separate it into trigram runes.
-func Tokenize(s string, processor func(r rune) []rune) ([]ProcessedRuneGroup, string) {
-	processedRunes, processedString := ProcessRunes([]rune(s), processor)
-	trigrams := NGrams(processedRunes, 3)
+func Tokenize(
+	s string,
+	splitter func([]rune) [][]rune,
+	processor func(r rune) []rune,
+) ([]ProcessedRuneGroup, string) {
+	// Process the string
+	procSegments, procString := ProcessRunes([]rune(s), splitter, processor)
 
+	// Count how many trigrams will be generated later
+	var nTrigrams int
+	for _, procSegment := range procSegments {
+		nRunesInSegment := len(procSegment)
+		if nRunesInSegment >= 3 { // 3 for trigram
+			nTrigrams += nRunesInSegment - 3 + 1
+		}
+	}
+
+	// Allocate slice of trigrams
+	trigrams := make([][]ProcessedRune, 0, nTrigrams)
+
+	// Create trigram for each segment
+	for _, procSegment := range procSegments {
+		segmentTrigrams := NGrams(procSegment, 3)
+		trigrams = append(trigrams, segmentTrigrams...)
+	}
+
+	// Cast trigrams type
 	result := make([]ProcessedRuneGroup, len(trigrams))
 	for i := range result {
 		result[i] = ProcessedRuneGroup(trigrams[i])
 	}
 
-	return result, processedString
+	return result, procString
 }
 
 // NGrams splits an array into n-grams of specified size.

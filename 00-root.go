@@ -48,15 +48,25 @@ type _ScoredTokenGroup struct {
 	WordMarker [2]int
 }
 
-// Config is the configuration for this search engine.
-type Config struct {
+// Transformer is pair of function to handle [Document] before indexed.
+type Transformer struct {
+	// Splitter is function to split runes into several groups before it being
+	// processed and tokenized.
+	Splitter Splitter
 	// Processor is function to process a rune into another rune(s). The result also
 	// can be an empty slice, if that rune is supposed to be removed.
+	Processor Processor
+}
+
+// Config is the configuration for this search engine.
+type Config struct {
+	// Transformer is object to preprocess the document content, before it's tokenized
+	// and stored in indexes [Storage].
 	//
-	// This processor later will be used on the submitted [Document], but won't be
+	// This transformer later will be used on the submitted [Document], but won't be
 	// used on user queries. For user queries, developer responsible to process it
 	// themselves.
-	Processor Processor
+	Transformer Transformer
 	// Threshold is the minimum confidence score for search result.
 	Threshold float64
 }
@@ -64,9 +74,9 @@ type Config struct {
 // Storage is the container for storing trigram indexes for documents that will be
 // searched later. Use sqlite3 as database engine.
 type Storage struct {
-	db        *sqlx.DB
-	processor func(rune) []rune
-	threshold float64
+	db          *sqlx.DB
+	transformer Transformer
+	threshold   float64
 }
 
 // Open the search storage in the specified path.
@@ -77,15 +87,15 @@ func OpenStorage(path string, cfg Config) (*Storage, error) {
 	}
 
 	return &Storage{
-		db:        db,
-		processor: cfg.Processor,
-		threshold: cfg.Threshold,
+		db:          db,
+		transformer: cfg.Transformer,
+		threshold:   cfg.Threshold,
 	}, nil
 }
 
 // ApplyConfig applies the [Config] to the [Storage].
 func (s *Storage) ApplyConfig(cfg Config) *Storage {
-	s.processor = cfg.Processor
+	s.transformer = cfg.Transformer
 	s.threshold = cfg.Threshold
 	return s
 }
@@ -110,7 +120,10 @@ func (s *Storage) AddDocuments(docs ...Document) error {
 		}
 	}
 
-	return database.InsertDocuments(s.db, s.processor, dbDocs)
+	return database.InsertDocuments(s.db,
+		s.transformer.Splitter,
+		s.transformer.Processor,
+		dbDocs)
 }
 
 // DeleteDocuments remove the documents in the storage.
@@ -129,9 +142,9 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		return nil, nil
 	}
 
-	// Convert the query into tokens. Notice we don't pass any processor. Developer
-	// should normalize the query before submitting it to this search function.
-	queryTokens, query := tokenizer.Tokenize(query, nil)
+	// Convert the query into tokens. Notice we don't pass any splitter or processor.
+	// Developer should normalize the query before submitting it to this search function.
+	queryTokens, query := tokenizer.Tokenize(query, nil, nil)
 
 	// Convert tokens into strings
 	tokenStrings := make([]string, len(queryTokens))
@@ -252,7 +265,9 @@ func (s Storage) filterGoodCandidates(
 
 			// Check edit distance for this group
 			tgRunes := content[tg.WordMarker[0]:tg.WordMarker[1]]
-			_, processedText := tokenizer.ProcessRunes(tgRunes, s.processor)
+			_, processedText := tokenizer.ProcessRunes(tgRunes,
+				s.transformer.Splitter,
+				s.transformer.Processor)
 			editDistance := smetrics.Ukkonen(query, processedText, 1, 1, 1)
 
 			// Calculate accuracy using edit distance
