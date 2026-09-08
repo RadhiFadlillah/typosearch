@@ -54,9 +54,13 @@ type Transformer struct {
 	// Splitter is function to split runes into several groups before it being
 	// processed and tokenized.
 	Splitter Splitter
-	// Processor is function to process a rune into another rune(s). The result also
-	// can be an empty slice, if that rune is supposed to be removed.
+	// Processor is function to process a string into a normalized string. Used when
+	// querying, so must have the same output as IndexedProcessor.
 	Processor Processor
+	// IndexedProcessor is like Processor, but returns a list of runes + its
+	// original position in string. Used when indexing document, so must have the
+	// same output as Processor.
+	IndexedProcessor IndexedProcessor
 }
 
 // Config is the configuration for this search engine.
@@ -128,7 +132,7 @@ func (s *Storage) AddDocuments(docs ...Document) error {
 		}
 
 		// Run transformer
-		processedSegments, _ := s.runTransformer(doc.Content, transformer)
+		processedSegments := s.runIndexedTransformer(doc.Content, transformer)
 
 		// Count how many trigrams will be generated later
 		var nTrigrams int
@@ -139,7 +143,7 @@ func (s *Storage) AddDocuments(docs ...Document) error {
 		}
 
 		// Create trigrams for each segment
-		allTrigrams := make([][]ProcessedRune, 0, nTrigrams)
+		allTrigrams := make([][]IndexedRune, 0, nTrigrams)
 		for _, segment := range processedSegments {
 			segmentTrigrams := trigrams(segment)
 			allTrigrams = append(allTrigrams, segmentTrigrams...)
@@ -148,7 +152,7 @@ func (s *Storage) AddDocuments(docs ...Document) error {
 		// Convert the trigrams into document tokens
 		docTokens := make([]database.DocumentToken, len(allTrigrams))
 		for i := range allTrigrams {
-			tri := ProcessedRuneGroup(allTrigrams[i])
+			tri := IndexedRuneGroup(allTrigrams[i])
 			start, end := tri.Range()
 			docTokens[i] = database.DocumentToken{
 				Start: start,
@@ -311,7 +315,7 @@ func (s Storage) filterGoodCandidates(
 
 			// Check edit distance for this group
 			tgRunes := content[tg.WordMarker[0]:tg.WordMarker[1]]
-			_, processedText := s.runTransformer(string(tgRunes), transformer)
+			processedText := s.runTransformer(string(tgRunes), transformer)
 
 			diffs := dmp.DiffMain(query, processedText, false)
 			editDistance := dmp.DiffLevenshtein(diffs)
@@ -467,8 +471,8 @@ func (s Storage) calcCombinedScore(tokenGroups []_ScoredTokenGroup) float64 {
 
 // runTransformer apply transformer to the original string. It will run [Splitter]
 // to separate string to several segments, then each segment will be processed by
-// the [Processor], so each segments will have their own [ProcessedRune].
-func (s Storage) runTransformer(original string, transformer Transformer) ([]ProcessedRuneGroup, string) {
+// the [Processor], then the output will be combined to one final string.
+func (s Storage) runTransformer(original string, transformer Transformer) string {
 	// Prepare default splitter and processor
 	splitter := transformer.Splitter
 	processor := transformer.Processor
@@ -485,13 +489,41 @@ func (s Storage) runTransformer(original string, transformer Transformer) ([]Pro
 	segments := splitter(original)
 
 	// Process each segments
-	var start int
 	var sb strings.Builder
-	processedSegments := make([]ProcessedRuneGroup, 0, len(segments))
+	for _, segment := range segments {
+		sb.WriteString(processor(segment))
+	}
+
+	return sb.String()
+}
+
+// runIndexedTransformer apply transformer to the original string. It will run
+// [Splitter] to separate string to several segments, then each segment will be
+// processed by the [IndexedProcessor], so each segments will have their own
+// [IndexedRune].
+func (s Storage) runIndexedTransformer(original string, transformer Transformer) []IndexedRuneGroup {
+	// Prepare default splitter and processor
+	splitter := transformer.Splitter
+	processor := transformer.IndexedProcessor
+
+	if splitter == nil {
+		splitter = defaultSplitter
+	}
+
+	if processor == nil {
+		processor = defaultIndexedProcessor
+	}
+
+	// Run splitter
+	segments := splitter(original)
+
+	// Process each segments
+	var start int
+	processedSegments := make([]IndexedRuneGroup, 0, len(segments))
 
 	for _, segment := range segments {
 		// Process the segment
-		var processedSegment ProcessedRuneGroup
+		var processedSegment IndexedRuneGroup
 		processedSegment = processor(segment)
 
 		// Adjust index for the processed
@@ -504,10 +536,9 @@ func (s Storage) runTransformer(original string, transformer Transformer) ([]Pro
 
 		// Save the processed runes
 		if len(processedSegment) > 0 {
-			sb.WriteString(processedSegment.String())
 			processedSegments = append(processedSegments, processedSegment)
 		}
 	}
 
-	return processedSegments, sb.String()
+	return processedSegments
 }

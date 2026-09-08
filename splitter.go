@@ -6,7 +6,7 @@ import (
 )
 
 // Splitter is function to split string into several groups. Will be run before
-// [Processor] applied.
+// [IndexedProcessor] applied.
 type Splitter func(string) []string
 
 // SplitByWord splits input into words, keeping any spaces that follow a word

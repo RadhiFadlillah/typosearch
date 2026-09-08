@@ -10,47 +10,50 @@ import (
 var dmp = diffmatchpatch.New()
 
 // Container for a processed rune and its position in the original string.
-type ProcessedRune struct {
+type IndexedRune struct {
 	R     rune
 	Index int
 }
 
-// Group of [ProcessedRune], with various helper function.
-type ProcessedRuneGroup []ProcessedRune
+// Group of [IndexedRune], with various helper function.
+type IndexedRuneGroup []IndexedRune
 
 // Returns the runes as combined string.
-func (prg ProcessedRuneGroup) String() string {
+func (irg IndexedRuneGroup) String() string {
 	var sb strings.Builder
-	for _, pr := range prg {
+	for _, pr := range irg {
 		sb.WriteRune(pr.R)
 	}
 	return sb.String()
 }
 
 // Returns the start and end index for these runes.
-func (prg ProcessedRuneGroup) Range() (int, int) {
-	if len(prg) == 0 {
+func (irg IndexedRuneGroup) Range() (int, int) {
+	if len(irg) == 0 {
 		return 0, 0
 	}
 
-	start := prg[0].Index
-	end := prg[len(prg)-1].Index + 1 // +1 because in Go upper bound is exclusive
+	start := irg[0].Index
+	end := irg[len(irg)-1].Index + 1 // +1 because in Go upper bound is exclusive
 	return start, end
 }
 
-// Processor is function to process a string, then return the processed string as
-// list of [ProcessedRune], which is a rune + its index in the original string.
-type Processor func(string) []ProcessedRune
+// Processor is function to process a string, then return the processed string.
+type Processor func(string) string
+
+// IndexedProcessor is like the [Processor], but returns the processed string
+// as list of [IndexedRune], which is a rune + its index in the original string.
+type IndexedProcessor func(string) []IndexedRune
 
 // IndexProcessedString is a helper function to calculate the difference between
-// the original and the processed string, then return list of [ProcessedRune].
-func IndexProcessedString(original, processed string) []ProcessedRune {
+// the original and the processed string, then return list of [IndexedRune].
+func IndexProcessedString(original, processed string) []IndexedRune {
 	// Get diffs from both strings
 	diffs := dmp.DiffMain(original, processed, false)
 
 	// Use diffs to track position changes
 	var cursor int
-	runes := make([]ProcessedRune, 0, utf8.RuneCountInString(processed))
+	runes := make([]IndexedRune, 0, utf8.RuneCountInString(processed))
 
 	for i, diff := range diffs {
 		switch diff.Type {
@@ -69,7 +72,7 @@ func IndexProcessedString(original, processed string) []ProcessedRune {
 			}
 
 			for _, r := range diff.Text {
-				runes = append(runes, ProcessedRune{R: r, Index: cursor})
+				runes = append(runes, IndexedRune{R: r, Index: cursor})
 				if isReplace {
 					cursor++
 				}
@@ -77,7 +80,7 @@ func IndexProcessedString(original, processed string) []ProcessedRune {
 
 		case diffmatchpatch.DiffEqual:
 			for _, r := range diff.Text {
-				runes = append(runes, ProcessedRune{R: r, Index: cursor})
+				runes = append(runes, IndexedRune{R: r, Index: cursor})
 				cursor++
 			}
 		}
@@ -86,11 +89,15 @@ func IndexProcessedString(original, processed string) []ProcessedRune {
 	return runes
 }
 
-func defaultProcessor(s string) []ProcessedRune {
+func defaultProcessor(s string) string {
+	return s
+}
+
+func defaultIndexedProcessor(s string) []IndexedRune {
 	runes := []rune(s)
-	result := make([]ProcessedRune, len(runes))
+	result := make([]IndexedRune, len(runes))
 	for i, r := range runes {
-		result[i] = ProcessedRune{R: r, Index: i}
+		result[i] = IndexedRune{R: r, Index: i}
 	}
 	return result
 }
