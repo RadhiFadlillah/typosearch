@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/RadhiFadlillah/typosearch/internal/database"
-	"github.com/RadhiFadlillah/typosearch/internal/tokenizer"
 	"github.com/jmoiron/sqlx"
-	"github.com/xrash/smetrics"
-
 	_ "modernc.org/sqlite"
 )
 
@@ -118,21 +116,52 @@ func (s *Storage) AddDocuments(docs ...Document) error {
 	// Cast Document to insert arg
 	dbDocs := make([]database.InsertDocumentArg, len(docs))
 	for i, doc := range docs {
+		// Check for document validity
 		if doc.Type == "" {
 			return fmt.Errorf("document with id %q has no type", doc.Identifier)
 		}
 
+		// Make sure transformer is registered
 		transformer, exist := s.transformers[doc.Type]
 		if !exist {
 			return fmt.Errorf("transformer for type %q has not registered", doc.Type)
+		}
+
+		// Run transformer
+		processedSegments, _ := s.runTransformer(doc.Content, transformer)
+
+		// Count how many trigrams will be generated later
+		var nTrigrams int
+		for _, segment := range processedSegments {
+			if nRunes := len(segment); nRunes >= 3 { // 3 for trigram
+				nTrigrams += nRunes - 3 + 1
+			}
+		}
+
+		// Create trigrams for each segment
+		allTrigrams := make([][]ProcessedRune, 0, nTrigrams)
+		for _, segment := range processedSegments {
+			segmentTrigrams := trigrams(segment)
+			allTrigrams = append(allTrigrams, segmentTrigrams...)
+		}
+
+		// Convert the trigrams into document tokens
+		docTokens := make([]database.DocumentToken, len(allTrigrams))
+		for i := range allTrigrams {
+			tri := ProcessedRuneGroup(allTrigrams[i])
+			start, end := tri.Range()
+			docTokens[i] = database.DocumentToken{
+				Start: start,
+				End:   end,
+				Token: tri.String(),
+			}
 		}
 
 		dbDocs[i] = database.InsertDocumentArg{
 			Identifier: doc.Identifier,
 			Type:       doc.Type,
 			Content:    doc.Content,
-			Splitter:   transformer.Splitter,
-			Processor:  transformer.Processor,
+			Tokens:     docTokens,
 		}
 	}
 
@@ -144,10 +173,8 @@ func (st *Storage) DeleteDocuments(ids ...string) error {
 	return database.DeleteDocuments(st.db, ids...)
 }
 
-// Search the storage for suitable documents. The returned documents will have its
-// content normalized in NFD format. If users need NFC, they need to normalize it
-// themselves using norm.NFC. Developer should normalize the query before submitting
-// it to this function.
+// Search the storage for suitable documents. Developer should normalize the query
+// before submitting it to this function.
 func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 	// Clear up spaces from query
 	query = strings.Join(strings.Fields(query), " ")
@@ -155,14 +182,13 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 		return nil, nil
 	}
 
-	// Convert the query into tokens. Notice we don't pass any splitter or processor.
-	// Developer should normalize the query before submitting it to this search function.
-	queryTokens, query := tokenizer.Tokenize(query, nil, nil)
+	// Convert the query into trigram tokens.
+	queryTokens := trigrams([]rune(query))
 
-	// Convert tokens into strings
+	// Convert tokens frome runes into strings
 	tokenStrings := make([]string, len(queryTokens))
 	for i, token := range queryTokens {
-		tokenStrings[i] = token.String()
+		tokenStrings[i] = string(token)
 	}
 
 	// Fetch list of matching candidates from database
@@ -285,10 +311,10 @@ func (s Storage) filterGoodCandidates(
 
 			// Check edit distance for this group
 			tgRunes := content[tg.WordMarker[0]:tg.WordMarker[1]]
-			_, processedText := tokenizer.ProcessRunes(tgRunes,
-				transformer.Splitter,
-				transformer.Processor)
-			editDistance := smetrics.Ukkonen(query, processedText, 1, 1, 1)
+			_, processedText := s.runTransformer(string(tgRunes), transformer)
+
+			diffs := dmp.DiffMain(query, processedText, false)
+			editDistance := dmp.DiffLevenshtein(diffs)
 
 			// Calculate accuracy using edit distance
 			maxLength := max(len(query), len(processedText))
@@ -437,4 +463,51 @@ func (s Storage) calcCombinedScore(tokenGroups []_ScoredTokenGroup) float64 {
 	}
 
 	return combinedScore
+}
+
+// runTransformer apply transformer to the original string. It will run [Splitter]
+// to separate string to several segments, then each segment will be processed by
+// the [Processor], so each segments will have their own [ProcessedRune].
+func (s Storage) runTransformer(original string, transformer Transformer) ([]ProcessedRuneGroup, string) {
+	// Prepare default splitter and processor
+	splitter := transformer.Splitter
+	processor := transformer.Processor
+
+	if splitter == nil {
+		splitter = defaultSplitter
+	}
+
+	if processor == nil {
+		processor = defaultProcessor
+	}
+
+	// Run splitter
+	segments := splitter(original)
+
+	// Process each segments
+	var start int
+	var sb strings.Builder
+	processedSegments := make([]ProcessedRuneGroup, 0, len(segments))
+
+	for _, segment := range segments {
+		// Process the segment
+		var processedSegment ProcessedRuneGroup
+		processedSegment = processor(segment)
+
+		// Adjust index for the processed
+		for i := range processedSegment {
+			processedSegment[i].Index += start
+		}
+
+		// Increase start position
+		start += utf8.RuneCountInString(segment)
+
+		// Save the processed runes
+		if len(processedSegment) > 0 {
+			sb.WriteString(processedSegment.String())
+			processedSegments = append(processedSegments, processedSegment)
+		}
+	}
+
+	return processedSegments, sb.String()
 }

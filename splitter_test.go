@@ -5,20 +5,6 @@ import (
 	"testing"
 )
 
-// runeSlices converts a []string into [][]rune, for building expected results tersely.
-func runeSlices(ss []string) [][]rune {
-	if ss == nil {
-		return nil
-	}
-
-	out := make([][]rune, len(ss))
-	for i, s := range ss {
-		out[i] = []rune(s)
-	}
-
-	return out
-}
-
 func TestWordSplitter(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -79,10 +65,9 @@ func TestWordSplitter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := WordSplitter([]rune(tt.input))
-			want := runeSlices(tt.want)
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("SplitByWord(%q):\n  got  %q\n  want %q", tt.input, runesToStrings(got), tt.want)
+			got := WordSplitter(tt.input)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("SplitByWord(%q):\n  got  %q\n  want %q", tt.input, got, tt.want)
 			}
 		})
 	}
@@ -163,20 +148,10 @@ func TestSentenceSplitter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := SentenceSplitter([]rune(tt.input))
-			want := runeSlices(tt.want)
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("SplitBySentence(%q):\n  got  %q\n  want %q", tt.input, runesToStrings(got), tt.want)
+			got := SentenceSplitter(tt.input)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("SplitBySentence(%q):\n  got  %q\n  want %q", tt.input, got, tt.want)
 			}
 		})
 	}
-}
-
-// runesToStrings is a small helper purely for readable test failure output.
-func runesToStrings(rs [][]rune) []string {
-	out := make([]string, len(rs))
-	for i, r := range rs {
-		out[i] = string(r)
-	}
-	return out
 }
