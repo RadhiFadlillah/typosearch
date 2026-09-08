@@ -47,6 +47,8 @@ func WordSplitter(input []rune) [][]rune {
 	return result
 }
 
+var normalSentenceSplitter = CustomSentenceSplitter(nil)
+
 // SentenceSplitter splits input into sentences, keeping any whitespace that
 // follows a sentence-ending punctuation mark attached to that sentence.
 // It also keeps repeated punctuation (e.g. "...", "?!") and trailing closing
@@ -62,47 +64,57 @@ func WordSplitter(input []rune) [][]rune {
 // - 1: "Yes...   "
 // - 2: "Indeed."
 func SentenceSplitter(input []rune) [][]rune {
-	var result [][]rune
-	var current []rune
-	sentenceEnded := false // true once we've seen ./!/? and are still in the "ending" run
+	return normalSentenceSplitter(input)
+}
 
-	isEnder := func(r rune) bool {
-		return r == '.' || r == '!' || r == '?'
-	}
-
-	isClosing := func(r rune) bool {
-		switch r {
-		case '"', '\'', ')', ']', '}', '”', '’', '»':
-			return true
+// CustomSentenceSplitter is same as SentenceSplitter, except we cand use
+// custom-defined separator.
+func CustomSentenceSplitter(isSeparator func(rune) bool) func([]rune) [][]rune {
+	if isSeparator == nil {
+		isSeparator = func(r rune) bool {
+			return r == '.' || r == '!' || r == '?'
 		}
-		return false
 	}
 
-	for _, r := range input {
-		if sentenceEnded {
-			switch {
-			case unicode.IsSpace(r), isEnder(r), isClosing(r):
-				// Still part of the sentence's "ending sequence":
-				// more punctuation, a closing quote/bracket, or trailing whitespace.
-				current = append(current, r)
-				continue
-			default:
-				// A real new sentence starts here.
-				result = append(result, current)
-				current = nil
-				sentenceEnded = false
+	return func(input []rune) [][]rune {
+		var result [][]rune
+		var current []rune
+		sentenceEnded := false // true once we've seen ./!/? and are still in the "ending" run
+
+		isClosing := func(r rune) bool {
+			switch r {
+			case '"', '\'', ')', ']', '}', '”', '’', '»':
+				return true
+			}
+			return false
+		}
+
+		for _, r := range input {
+			if sentenceEnded {
+				switch {
+				case unicode.IsSpace(r), isSeparator(r), isClosing(r):
+					// Still part of the sentence's "ending sequence":
+					// more punctuation, a closing quote/bracket, or trailing whitespace.
+					current = append(current, r)
+					continue
+				default:
+					// A real new sentence starts here.
+					result = append(result, current)
+					current = nil
+					sentenceEnded = false
+				}
+			}
+
+			current = append(current, r)
+			if isSeparator(r) {
+				sentenceEnded = true
 			}
 		}
 
-		current = append(current, r)
-		if isEnder(r) {
-			sentenceEnded = true
+		if len(current) > 0 {
+			result = append(result, current)
 		}
-	}
 
-	if len(current) > 0 {
-		result = append(result, current)
+		return result
 	}
-
-	return result
 }
