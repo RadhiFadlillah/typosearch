@@ -11,26 +11,26 @@ import (
 
 // InsertArg is argument for inserting Document.
 type InsertDocumentArg struct {
-	Identifier string `db:"identifier"`
-	Content    string `db:"content"`
+	Identifier string
+	Type       string
+	Content    string
+	Splitter   func([]rune) [][]rune
+	Processor  func(r rune) []rune
 }
 
 // InsertDocuments save the documents into the database.
-func InsertDocuments(
-	db *sqlx.DB,
-	splitter func([]rune) [][]rune,
-	processor func(r rune) []rune,
-	args []InsertDocumentArg,
-) (err error) {
+func InsertDocuments(db *sqlx.DB, args []InsertDocumentArg) (err error) {
 	// If there are no args submitted, stop early
 	if len(args) == 0 {
 		return nil
 	}
 
-	// Remove index, and create it once it over
-	_, err = db.Exec(`DROP INDEX IF EXISTS document_token_idx_covering`)
-	if err != nil {
-		return
+	// Remove index if there are many documents, and create it once it over
+	if len(args) > 10 {
+		_, err = db.Exec(`DROP INDEX IF EXISTS document_token_idx_covering`)
+		if err != nil {
+			return
+		}
 	}
 
 	// Start transaction
@@ -55,15 +55,15 @@ func InsertDocuments(
 	// Prepare statement
 	stmtGetDoc, err := tx.Preparex(`
 		SELECT id FROM document
-		WHERE identifier = ?`)
+		WHERE identifier = ? AND type = ?`)
 	if err != nil {
 		return
 	}
 
 	stmtInsertDoc, err := tx.Preparex(`
-		INSERT INTO document (identifier, content)
-		VALUES (?, ?)
-		ON CONFLICT (identifier) DO UPDATE
+		INSERT INTO document (identifier, type, content)
+		VALUES (?, ?, ?)
+		ON CONFLICT (identifier, type) DO UPDATE
 		SET content = excluded.content`)
 	if err != nil {
 		return
@@ -89,7 +89,7 @@ func InsertDocuments(
 		// Get document ID if it's exist
 		var documentID int64
 		documentExist := true
-		err = stmtGetDoc.Get(&documentID, arg.Identifier)
+		err = stmtGetDoc.Get(&documentID, arg.Identifier, arg.Type)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				documentExist = false
@@ -107,6 +107,7 @@ func InsertDocuments(
 		var res sql.Result
 		res, err = stmtInsertDoc.Exec(
 			arg.Identifier,
+			arg.Type,
 			nfdContent)
 		if err != nil {
 			return
@@ -127,7 +128,7 @@ func InsertDocuments(
 		}
 
 		// Save tokens
-		tokens, _ := tokenizer.Tokenize(nfdContent, splitter, processor)
+		tokens, _ := tokenizer.Tokenize(nfdContent, arg.Splitter, arg.Processor)
 		for _, token := range tokens {
 			text := token.String()
 			start, end := token.Range()

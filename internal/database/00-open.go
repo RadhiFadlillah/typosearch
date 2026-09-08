@@ -75,9 +75,10 @@ func Open(path string) (db *sqlx.DB, err error) {
 const ddlCreateDocument = `
 CREATE TABLE IF NOT EXISTS document (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
-	identifier TEXT    NOT NULL UNIQUE,
+	identifier TEXT    NOT NULL,
+	type       TEXT    NOT NULL,
 	content    TEXT    NOT NULL,
-	UNIQUE (identifier)
+	UNIQUE (identifier, type)
 )`
 
 const ddlCreateDocumentToken = `

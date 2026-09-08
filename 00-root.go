@@ -2,6 +2,7 @@ package typosearch
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -17,6 +18,8 @@ import (
 type Document struct {
 	// Identifier is the unique identifier for this Document.
 	Identifier string
+	// Type is the type of this Document.
+	Type string
 	// Content is the text body of this Document.
 	Content string
 }
@@ -60,13 +63,14 @@ type Transformer struct {
 
 // Config is the configuration for this search engine.
 type Config struct {
-	// Transformer is object to preprocess the document content, before it's tokenized
+	// Transformers is map between Document type and its Transformer. Transformer
+	// itself is object to preprocess the document content, before it's tokenized
 	// and stored in indexes [Storage].
 	//
 	// This transformer later will be used on the submitted [Document], but won't be
 	// used on user queries. For user queries, developer responsible to process it
 	// themselves.
-	Transformer Transformer
+	Transformers map[string]Transformer
 	// Threshold is the minimum confidence score for search result.
 	Threshold float64
 }
@@ -74,9 +78,9 @@ type Config struct {
 // Storage is the container for storing trigram indexes for documents that will be
 // searched later. Use sqlite3 as database engine.
 type Storage struct {
-	db          *sqlx.DB
-	transformer Transformer
-	threshold   float64
+	db           *sqlx.DB
+	transformers map[string]Transformer
+	threshold    float64
 }
 
 // Open the search storage in the specified path.
@@ -87,15 +91,15 @@ func OpenStorage(path string, cfg Config) (*Storage, error) {
 	}
 
 	return &Storage{
-		db:          db,
-		transformer: cfg.Transformer,
-		threshold:   cfg.Threshold,
+		db:           db,
+		transformers: cfg.Transformers,
+		threshold:    cfg.Threshold,
 	}, nil
 }
 
 // ApplyConfig applies the [Config] to the [Storage].
 func (s *Storage) ApplyConfig(cfg Config) *Storage {
-	s.transformer = cfg.Transformer
+	s.transformers = cfg.Transformers
 	s.threshold = cfg.Threshold
 	return s
 }
@@ -114,16 +118,25 @@ func (s *Storage) AddDocuments(docs ...Document) error {
 	// Cast Document to insert arg
 	dbDocs := make([]database.InsertDocumentArg, len(docs))
 	for i, doc := range docs {
+		if doc.Type == "" {
+			return fmt.Errorf("document with id %q has no type", doc.Identifier)
+		}
+
+		transformer, exist := s.transformers[doc.Type]
+		if !exist {
+			return fmt.Errorf("transformer for type %q has not registered", doc.Type)
+		}
+
 		dbDocs[i] = database.InsertDocumentArg{
 			Identifier: doc.Identifier,
+			Type:       doc.Type,
 			Content:    doc.Content,
+			Splitter:   transformer.Splitter,
+			Processor:  transformer.Processor,
 		}
 	}
 
-	return database.InsertDocuments(s.db,
-		s.transformer.Splitter,
-		s.transformer.Processor,
-		dbDocs)
+	return database.InsertDocuments(s.db, dbDocs)
 }
 
 // DeleteDocuments remove the documents in the storage.
@@ -253,6 +266,9 @@ func (s Storage) filterGoodCandidates(
 			continue
 		}
 
+		// Get transformet for this doc
+		transformer := s.transformers[doc.Type]
+
 		// Cast content to []rune
 		content := []rune(doc.Content)
 
@@ -266,8 +282,8 @@ func (s Storage) filterGoodCandidates(
 			// Check edit distance for this group
 			tgRunes := content[tg.WordMarker[0]:tg.WordMarker[1]]
 			_, processedText := tokenizer.ProcessRunes(tgRunes,
-				s.transformer.Splitter,
-				s.transformer.Processor)
+				transformer.Splitter,
+				transformer.Processor)
 			editDistance := smetrics.Ukkonen(query, processedText, 1, 1, 1)
 
 			// Calculate accuracy using edit distance
@@ -315,6 +331,7 @@ func (s Storage) filterGoodCandidates(
 		// Save the result
 		searchResults = append(searchResults, MatchedDocument{
 			Identifier:  doc.Identifier,
+			Type:        doc.Type,
 			Content:     doc.Content,
 			Markers:     markers,
 			WordMarkers: wordMarkers,

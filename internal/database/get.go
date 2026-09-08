@@ -11,6 +11,7 @@ import (
 type Document struct {
 	ID         int    `db:"id"`
 	Identifier string `db:"identifier"`
+	Type       string `db:"type"`
 	Content    string `db:"content"`
 }
 
@@ -43,7 +44,7 @@ type DocumentWithTokensGroups struct {
 func GetDocuments(db *sqlx.DB, ids ...int) (docs map[int]Document, err error) {
 	// Prepare query
 	stmt, args, err := sqlx.In(`
-		SELECT id, identifier, content
+		SELECT id, identifier, type, content
 		FROM document
 		WHERE id IN (?)`, ids)
 	if err != nil {
