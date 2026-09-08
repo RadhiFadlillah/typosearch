@@ -239,6 +239,10 @@ func (s Storage) filterGoodCandidates(
 	goodCandidates []_MatchCandidate,
 	query string,
 ) ([]MatchedDocument, error) {
+	if len(goodCandidates) == 0 {
+		return nil, nil
+	}
+
 	// Get content for the candidates, since we need it to measure accuracy
 	documentIDs := make([]int, len(goodCandidates))
 	for i, candidate := range goodCandidates {
