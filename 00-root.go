@@ -179,7 +179,7 @@ func (st *Storage) DeleteDocuments(ids ...string) error {
 
 // Search the storage for suitable documents. Developer should normalize the query
 // before submitting it to this function.
-func (s *Storage) Search(query string) ([]MatchedDocument, error) {
+func (s *Storage) Search(query string, types ...string) ([]MatchedDocument, error) {
 	// Clear up spaces from query
 	query = strings.Join(strings.Fields(query), " ")
 	if query == "" {
@@ -197,7 +197,7 @@ func (s *Storage) Search(query string) ([]MatchedDocument, error) {
 
 	// Fetch list of matching candidates from database
 	nQueryToken := len(tokenStrings)
-	candidates, err := database.GetDocumentsByTokens(s.db, tokenStrings...)
+	candidates, err := database.GetDocumentsByTokens(s.db, tokenStrings, types...)
 	if err != nil {
 		return nil, err
 	}

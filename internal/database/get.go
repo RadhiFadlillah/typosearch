@@ -68,7 +68,7 @@ func GetDocuments(db *sqlx.DB, ids ...int) (docs map[int]Document, err error) {
 }
 
 // GetDocumentsByTokens fetch list of Documents based on the specified tokens.
-func GetDocumentsByTokens(db *sqlx.DB, queryTokens ...string) (
+func GetDocumentsByTokens(db *sqlx.DB, queryTokens []string, types ...string) (
 	finalDocuments []DocumentWithTokensGroups,
 	err error,
 ) {
@@ -80,12 +80,26 @@ func GetDocumentsByTokens(db *sqlx.DB, queryTokens ...string) (
 		tokenQueryIndexes[token] = append(tokenQueryIndexes[token], i)
 	}
 
+	// Prepare query
+	var inQuery string
+	var inArgs []any
+	if len(types) == 0 {
+		inQuery = `SELECT document_id, start, end, token
+			FROM document_token
+			WHERE token IN (?)
+			ORDER BY document_id, start`
+		inArgs = []any{queryTokens}
+	} else {
+		inQuery = `SELECT dt.document_id, dt.start, dt.end, dt.token
+			FROM document_token dt
+			LEFT JOIN document d ON dt.document_id = d.id
+			WHERE dt.token IN (?) AND d.type IN (?)
+			ORDER BY document_id, start`
+		inArgs = []any{queryTokens, types}
+	}
+
 	// Fetch list of document tokens from database
-	stmt, args, err := sqlx.In(`
-		SELECT document_id, start, end, token
-		FROM document_token
-		WHERE token IN (?)
-		ORDER BY document_id, start`, queryTokens)
+	stmt, args, err := sqlx.In(inQuery, inArgs...)
 	if err != nil {
 		return
 	}
