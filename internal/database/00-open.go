@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"net/url"
@@ -10,14 +11,14 @@ import (
 )
 
 // Open opens database and initiate the tables if they don't exist.
-func Open(path string) (db *sqlx.DB, err error) {
+func Open(ctx context.Context, path string) (db *sqlx.DB, err error) {
 	// Prepare DSN
 	q := url.Values{}
 	q.Add("_pragma", "foreign_keys(1)")
 	dsn := "file:" + path + "?" + q.Encode()
 
 	// Open database
-	db, err = sqlx.Connect("sqlite", dsn)
+	db, err = sqlx.ConnectContext(ctx, "sqlite", dsn)
 	if err != nil {
 		err = fmt.Errorf("failed to open database: %v", err)
 		return
@@ -28,7 +29,7 @@ func Open(path string) (db *sqlx.DB, err error) {
 
 	// Create transaction
 	var tx *sqlx.Tx
-	tx, err = db.Beginx()
+	tx, err = db.BeginTxx(ctx, nil)
 	if err != nil {
 		err = fmt.Errorf("failed to start transaction: %v", err)
 		return
@@ -56,7 +57,7 @@ func Open(path string) (db *sqlx.DB, err error) {
 		ddlCreateDocumentTokenIndexToken}
 
 	for _, query := range ddlQueries {
-		_, err = tx.Exec(query)
+		_, err = tx.ExecContext(ctx, query)
 		if err != nil {
 			return
 		}

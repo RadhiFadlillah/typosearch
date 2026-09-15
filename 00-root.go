@@ -87,8 +87,8 @@ type Storage struct {
 }
 
 // Open the search storage in the specified path.
-func OpenStorage(path string, cfg Config) (*Storage, error) {
-	db, err := database.Open(path)
+func OpenStorage(ctx context.Context, path string, cfg Config) (*Storage, error) {
+	db, err := database.Open(ctx, path)
 	if err != nil {
 		return nil, err
 	}
