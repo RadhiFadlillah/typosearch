@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -20,14 +21,14 @@ type InsertDocumentArg struct {
 }
 
 // InsertDocuments save the documents into the database.
-func InsertDocuments(db *sqlx.DB, args []InsertDocumentArg) (err error) {
+func InsertDocuments(ctx context.Context, db *sqlx.DB, args []InsertDocumentArg) (err error) {
 	// If there are no args submitted, stop early
 	if len(args) == 0 {
 		return nil
 	}
 
 	// Start transaction
-	tx, err := db.Beginx()
+	tx, err := db.BeginTxx(ctx, nil)
 	if err != nil {
 		err = fmt.Errorf("failed to start transaction: %v", err)
 		return
@@ -47,7 +48,7 @@ func InsertDocuments(db *sqlx.DB, args []InsertDocumentArg) (err error) {
 	// Exec each batch
 	for start := 0; start < len(args); start += docBatchSize {
 		end := min(start+docBatchSize, len(args))
-		if err = insertDocumentBatch(tx, args[start:end]); err != nil {
+		if err = insertDocumentBatch(ctx, tx, args[start:end]); err != nil {
 			return
 		}
 	}
@@ -58,17 +59,17 @@ func InsertDocuments(db *sqlx.DB, args []InsertDocumentArg) (err error) {
 }
 
 // insertDocumentBatch upserts one batch of documents and their tokens.
-func insertDocumentBatch(tx *sqlx.Tx, args []InsertDocumentArg) error {
-	docIDs, err := upsertDocuments(tx, args)
+func insertDocumentBatch(ctx context.Context, tx *sqlx.Tx, args []InsertDocumentArg) error {
+	docIDs, err := upsertDocuments(ctx, tx, args)
 	if err != nil {
 		return fmt.Errorf("failed to upsert documents: %w", err)
 	}
 
-	if err := deleteDocumentTokens(tx, docIDs); err != nil {
+	if err := deleteDocumentTokens(ctx, tx, docIDs); err != nil {
 		return fmt.Errorf("failed to delete document tokens: %w", err)
 	}
 
-	if err := insertDocumentTokens(tx, args, docIDs); err != nil {
+	if err := insertDocumentTokens(ctx, tx, args, docIDs); err != nil {
 		return fmt.Errorf("failed to insert document tokens: %w", err)
 	}
 
@@ -77,7 +78,7 @@ func insertDocumentBatch(tx *sqlx.Tx, args []InsertDocumentArg) error {
 
 // upsertDocuments inserts/updates all documents in the batch with a single multi-row
 // statement and returns their ids, keyed by identifier+type, via RETURNING.
-func upsertDocuments(tx *sqlx.Tx, args []InsertDocumentArg) (map[string]int, error) {
+func upsertDocuments(ctx context.Context, tx *sqlx.Tx, args []InsertDocumentArg) (map[string]int, error) {
 	// Prepare query
 	placeholders := make([]string, 0, len(args))
 	values := make([]any, 0, len(args)*3)
@@ -96,7 +97,7 @@ func upsertDocuments(tx *sqlx.Tx, args []InsertDocumentArg) (map[string]int, err
 
 	// Run the query
 	var upsertedDocuments []Document
-	err := tx.Select(&upsertedDocuments, query, values...)
+	err := tx.SelectContext(ctx, &upsertedDocuments, query, values...)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +113,7 @@ func upsertDocuments(tx *sqlx.Tx, args []InsertDocumentArg) (map[string]int, err
 
 // deleteDocumentTokens removes existing tokens for every document in the
 // batch with a single statement.
-func deleteDocumentTokens(tx *sqlx.Tx, docIDs map[string]int) error {
+func deleteDocumentTokens(ctx context.Context, tx *sqlx.Tx, docIDs map[string]int) error {
 	// Make sure it's not empty
 	if len(docIDs) == 0 {
 		return nil
@@ -133,14 +134,14 @@ func deleteDocumentTokens(tx *sqlx.Tx, docIDs map[string]int) error {
 	}
 
 	// Exec delete
-	_, err = tx.Exec(query, args...)
+	_, err = tx.ExecContext(ctx, query, args...)
 	return err
 }
 
 // insertDocumentTokens bulk-inserts all tokens for the batch, chunking into multiple
 // statements only when needed to stay under the SQL variable limit (token counts per
 // document are not known beforehand, unlike the fixed 3-column document rows).
-func insertDocumentTokens(tx *sqlx.Tx, args []InsertDocumentArg, docIDs map[string]int) error {
+func insertDocumentTokens(ctx context.Context, tx *sqlx.Tx, args []InsertDocumentArg, docIDs map[string]int) error {
 	// How many args can be inserted per chunk?
 	const paramsPerRow = 4
 	rowsPerChunk := maxSQLiteVariables / paramsPerRow
@@ -164,7 +165,7 @@ func insertDocumentTokens(tx *sqlx.Tx, args []InsertDocumentArg, docIDs map[stri
 			strings.Join(placeholders, ", "))
 
 		// Exec the insert query
-		if _, err := tx.Exec(query, values...); err != nil {
+		if _, err := tx.ExecContext(ctx, query, values...); err != nil {
 			return err
 		}
 

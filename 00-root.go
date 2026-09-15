@@ -2,6 +2,7 @@ package typosearch
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -116,7 +117,7 @@ func (s *Storage) Close() error {
 
 // AddDocuments save and index the documents into the storage. If the document with
 // matching ID already exist, it will be updated.
-func (s *Storage) AddDocuments(docs ...Document) error {
+func (s *Storage) AddDocuments(ctx context.Context, docs ...Document) error {
 	// Cast Document to insert arg
 	dbDocs := make([]database.InsertDocumentArg, len(docs))
 	for i, doc := range docs {
@@ -169,17 +170,17 @@ func (s *Storage) AddDocuments(docs ...Document) error {
 		}
 	}
 
-	return database.InsertDocuments(s.db, dbDocs)
+	return database.InsertDocuments(ctx, s.db, dbDocs)
 }
 
 // DeleteDocuments remove the documents in the storage.
-func (st *Storage) DeleteDocuments(ids ...string) error {
-	return database.DeleteDocuments(st.db, ids...)
+func (st *Storage) DeleteDocuments(ctx context.Context, ids ...string) error {
+	return database.DeleteDocuments(ctx, st.db, ids...)
 }
 
 // Search the storage for suitable documents. Developer should normalize the query
 // before submitting it to this function.
-func (s *Storage) Search(query string, types ...string) ([]MatchedDocument, error) {
+func (s *Storage) Search(ctx context.Context, query string, types ...string) ([]MatchedDocument, error) {
 	// Clear up spaces from query
 	query = strings.Join(strings.Fields(query), " ")
 	if query == "" {
@@ -197,7 +198,7 @@ func (s *Storage) Search(query string, types ...string) ([]MatchedDocument, erro
 
 	// Fetch list of matching candidates from database
 	nQueryToken := len(tokenStrings)
-	candidates, err := database.GetDocumentsByTokens(s.db, tokenStrings, types...)
+	candidates, err := database.GetDocumentsByTokens(ctx, s.db, tokenStrings, types...)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +211,7 @@ func (s *Storage) Search(query string, types ...string) ([]MatchedDocument, erro
 	goodCandidates := s.filterInitialCandidates(candidates, nQueryToken)
 
 	// 2nd layer: filter by accuracy and combined score
-	return s.filterGoodCandidates(goodCandidates, query)
+	return s.filterGoodCandidates(ctx, goodCandidates, query)
 }
 
 func (s Storage) filterInitialCandidates(
@@ -266,6 +267,7 @@ func (s Storage) filterInitialCandidates(
 }
 
 func (s Storage) filterGoodCandidates(
+	ctx context.Context,
 	goodCandidates []_MatchCandidate,
 	query string,
 ) ([]MatchedDocument, error) {
@@ -279,7 +281,7 @@ func (s Storage) filterGoodCandidates(
 		documentIDs[i] = candidate.ID
 	}
 
-	documents, err := database.GetDocuments(s.db, documentIDs...)
+	documents, err := database.GetDocuments(ctx, s.db, documentIDs...)
 	if err != nil {
 		return nil, err
 	}

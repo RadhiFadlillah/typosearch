@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"sort"
 
@@ -41,7 +42,7 @@ type DocumentWithTokensGroups struct {
 
 // GetDocuments fetch list of document based of its ids. It will be sorted according
 // to the submitted ids order.
-func GetDocuments(db *sqlx.DB, ids ...int) (docs map[int]Document, err error) {
+func GetDocuments(ctx context.Context, db *sqlx.DB, ids ...int) (docs map[int]Document, err error) {
 	// Prepare query
 	stmt, args, err := sqlx.In(`
 		SELECT id, identifier, type, content
@@ -53,7 +54,7 @@ func GetDocuments(db *sqlx.DB, ids ...int) (docs map[int]Document, err error) {
 
 	// Fetch list of documents from database
 	var listDocs []Document
-	err = db.Select(&listDocs, stmt, args...)
+	err = db.SelectContext(ctx, &listDocs, stmt, args...)
 	if err != nil && err != sql.ErrNoRows {
 		return
 	}
@@ -68,7 +69,7 @@ func GetDocuments(db *sqlx.DB, ids ...int) (docs map[int]Document, err error) {
 }
 
 // GetDocumentsByTokens fetch list of Documents based on the specified tokens.
-func GetDocumentsByTokens(db *sqlx.DB, queryTokens []string, types ...string) (
+func GetDocumentsByTokens(ctx context.Context, db *sqlx.DB, queryTokens []string, types ...string) (
 	finalDocuments []DocumentWithTokensGroups,
 	err error,
 ) {
@@ -105,7 +106,7 @@ func GetDocumentsByTokens(db *sqlx.DB, queryTokens []string, types ...string) (
 	}
 
 	var documentTokens []DocumentToken
-	err = db.Select(&documentTokens, stmt, args...)
+	err = db.SelectContext(ctx, &documentTokens, stmt, args...)
 	if err != nil && err != sql.ErrNoRows {
 		return
 	}
