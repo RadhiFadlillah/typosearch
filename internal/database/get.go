@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"sort"
 
 	"github.com/jmoiron/sqlx"
@@ -127,7 +128,8 @@ func GetDocumentsByTokens(ctx context.Context, db *sqlx.DB, queryTokens []string
 	// For every document with matched tokens, group the token by its query index.
 	finalDocuments = make([]DocumentWithTokensGroups, 0, len(documentsWithMatchedTokens))
 	for _, dwmt := range documentsWithMatchedTokens {
-		tokenGroups := groupTokensByQueryIndex(dwmt.Tokens, nQueryTokens)
+		tokenGroups := groupTokensByQueryIndex(dwmt.Tokens, 9, nQueryTokens/3)
+
 		finalDocuments = append(finalDocuments, DocumentWithTokensGroups{
 			DocumentID:  dwmt.DocumentID,
 			TokenGroups: tokenGroups,
@@ -194,49 +196,73 @@ func groupTokensByDocument(
 	return documents
 }
 
-// For each document, group its tokens by token's query index. For example, let's
-// say we have bigram tokens like this (top is token text, bottom is index of
-// that token in the query)
-//
-// ["at", "la", "ka", "at", "ma", "ma", "al", "la", "ka", "at", "ak", "ak"]
-// [   5,    2,    4,    5,    0,    0,    1,    2,    4,    5,    3,    3]
-//
-// The expected groups are:
-//
-// 0: ["at"]
-// 1: ["la", "ka", "at"]
-// 2: ["ma"]
-// 3: ["ma", "al", "la", "ka", "at"]
-// 4: ["ak"]
-// 5: ["ak"]
-func groupTokensByQueryIndex(
-	documentTokens []DocumentToken,
-	nQueryTokens int,
-) [][]DocumentToken {
+func groupTokensByQueryIndex(documentTokens []DocumentToken, maxDrift, minSize int) [][]DocumentToken {
+	// Prepare result
 	var tokenGroups [][]DocumentToken
 
-	maxLength := len(documentTokens)
-	var currentGroup []DocumentToken
-	currentLastQueryIndex := nQueryTokens
-
+	// Process tokens one by one
 	for _, token := range documentTokens {
-		// If query index smaller than the last, save current group to list
-		if token.IndexInQuery <= currentLastQueryIndex {
-			if len(currentGroup) > 0 {
-				tokenGroups = append(tokenGroups, currentGroup)
+		// best is the index of the cluster that we think this token belongs to.
+		// -1 means "we haven't found a suitable cluster yet".
+		//
+		// bestDrift stores the drift of that selected cluster.
+		best, bestDrift := -1, 0
+
+		// Check the new match against every existing group.
+		for i, tokenGroup := range tokenGroups {
+			// Look at the last token in this group
+			lastToken := tokenGroup[len(tokenGroup)-1]
+
+			// How far did we move in the document?
+			dDoc := token.Start - lastToken.Start
+
+			// How far did we move in the query?
+			dQuery := token.IndexInQuery - lastToken.IndexInQuery
+
+			// The new token must move forward in query
+			if dQuery <= 0 {
+				continue
 			}
-			currentGroup = make([]DocumentToken, 0, maxLength)
+
+			// Compare how much we moved in the doc with how much we in the query.
+			//
+			// If both moved by the same amount, e.g. dDoc = 5 and dQuery = 5,
+			// then drift = 0, which is a perfect continuation of the same diagonal.
+			//
+			// If dDoc = 7 and dQuery = 5, then drift = 2.
+			drift := abs(dDoc - dQuery)
+
+			// If the difference is too large, this token does not belong to this group.
+			if drift > maxDrift {
+				continue
+			}
+
+			// We found a group that this token COULD belong to. But there might be
+			// several eligible groups. The algorithm chooses:
+			// 1. The group with MORE tokens.
+			// 2. If they have the same size, the group with SMALLER drift.
+			if best == -1 ||
+				len(tokenGroup) > len(tokenGroups[best]) ||
+				(len(tokenGroup) == len(tokenGroups[best]) && drift < bestDrift) {
+
+				best = i
+				bestDrift = drift
+			}
 		}
 
-		// Save the token to current group
-		currentLastQueryIndex = token.IndexInQuery
-		currentGroup = append(currentGroup, token)
+		// Check if we find a suitable existing cluster. If no (best == -1) then
+		// start a brand-new cluster containing only this token.
+		if best == -1 {
+			tokenGroups = append(tokenGroups, []DocumentToken{token})
+		} else {
+			tokenGroups[best] = append(tokenGroups[best], token)
+		}
 	}
 
-	// Save the trailing group
-	if len(currentGroup) > 0 {
-		tokenGroups = append(tokenGroups, currentGroup)
-	}
+	// Remove token groups that too small
+	tokenGroups = slices.DeleteFunc(tokenGroups, func(tg []DocumentToken) bool {
+		return len(tg) < minSize
+	})
 
 	return tokenGroups
 }
@@ -251,4 +277,11 @@ func firstLarger(a int, numbers []int) int {
 	}
 
 	return numbers[i]
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
