@@ -82,22 +82,51 @@ func GetDocumentsByTokens(ctx context.Context, db *sqlx.DB, queryTokens []string
 		tokenQueryIndexes[token] = append(tokenQueryIndexes[token], i)
 	}
 
+	// Calculate minimal token per document to be considered a match.
+	// For now we want at least a third of query is exist.
+	minimalTokenHit := nQueryTokens / 3
+
 	// Prepare query
 	var inQuery string
 	var inArgs []any
 	if len(types) == 0 {
-		inQuery = `SELECT document_id, start, end, token
-			FROM document_token
-			WHERE token IN (?)
-			ORDER BY document_id, start`
-		inArgs = []any{queryTokens}
-	} else {
-		inQuery = `SELECT dt.document_id, dt.start, dt.end, dt.token
+		inQuery = `
+			WITH document_candidate AS (
+				SELECT dt.document_id, COUNT(DISTINCT dt.token) AS hits
+				FROM document_token dt
+				WHERE 1
+				AND dt.token IN (?)
+				GROUP BY dt.document_id
+				HAVING hits >= ?
+				ORDER BY hits DESC
+				LIMIT 50)
+			SELECT dt.document_id, dt.start, dt.end, dt.token
 			FROM document_token dt
-			LEFT JOIN document d ON dt.document_id = d.id
-			WHERE dt.token IN (?) AND d.type IN (?)
-			ORDER BY document_id, start`
-		inArgs = []any{queryTokens, types}
+			JOIN document_candidate dc ON dt.document_id = dc.document_id
+			WHERE 1
+			AND dt.token IN (?)
+			ORDER BY dt.document_id, dt.start;`
+		inArgs = []any{queryTokens, minimalTokenHit, queryTokens}
+	} else {
+		inQuery = `
+			WITH document_candidate AS (
+				SELECT dt.document_id, COUNT(DISTINCT dt.token) AS hits
+				FROM document_token dt
+				JOIN document d ON dt.document_id = d.id
+				WHERE 1
+				AND dt.token IN (?)
+				AND d.type IN (?)
+				GROUP BY dt.document_id
+				HAVING hits >= ?
+				ORDER BY hits DESC
+				LIMIT 50)
+			SELECT dt.document_id, dt.start, dt.end, dt.token
+			FROM document_token dt
+			JOIN document_candidate dc ON dt.document_id = dc.document_id
+			WHERE 1
+			AND dt.token IN (?)
+			ORDER BY dt.document_id, dt.start`
+		inArgs = []any{queryTokens, types, minimalTokenHit, queryTokens}
 	}
 
 	// Fetch list of document tokens from database
