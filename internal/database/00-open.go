@@ -15,7 +15,6 @@ func Open(ctx context.Context, path string) (db *sqlx.DB, err error) {
 	// Prepare DSN
 	q := url.Values{}
 	q.Add("_foreign_keys", "1")
-	q.Add("_journal_mode", "WAL")
 	q.Add("_cache_size", "-262144")
 	dsn := "file:" + path + "?" + q.Encode()
 
