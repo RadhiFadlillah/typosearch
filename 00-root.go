@@ -74,8 +74,6 @@ type Config struct {
 	// used on user queries. For user queries, developer responsible to process it
 	// themselves.
 	Transformers map[string]Transformer
-	// Threshold is the minimum confidence score for search result.
-	Threshold float64
 }
 
 // Storage is the container for storing trigram indexes for documents that will be
@@ -83,7 +81,6 @@ type Config struct {
 type Storage struct {
 	db           *sqlx.DB
 	transformers map[string]Transformer
-	threshold    float64
 }
 
 // Open the search storage in the specified path.
@@ -96,14 +93,12 @@ func OpenStorage(ctx context.Context, path string, cfg Config) (*Storage, error)
 	return &Storage{
 		db:           db,
 		transformers: cfg.Transformers,
-		threshold:    cfg.Threshold,
 	}, nil
 }
 
 // ApplyConfig applies the [Config] to the [Storage].
 func (s *Storage) ApplyConfig(cfg Config) *Storage {
 	s.transformers = cfg.Transformers
-	s.threshold = cfg.Threshold
 	return s
 }
 
@@ -180,7 +175,7 @@ func (st *Storage) DeleteDocuments(ctx context.Context, ids ...string) error {
 
 // Search the storage for suitable documents. Developer should normalize the query
 // before submitting it to this function.
-func (s *Storage) Search(ctx context.Context, query string, types ...string) ([]MatchedDocument, error) {
+func (s *Storage) Search(ctx context.Context, threshold float64, query string, types ...string) ([]MatchedDocument, error) {
 	// Clear up spaces from query
 	query = strings.Join(strings.Fields(query), " ")
 	if query == "" {
@@ -211,7 +206,7 @@ func (s *Storage) Search(ctx context.Context, query string, types ...string) ([]
 	goodCandidates := s.filterInitialCandidates(candidates, nQueryToken)
 
 	// 2nd layer: filter by accuracy and combined score
-	return s.filterGoodCandidates(ctx, goodCandidates, query)
+	return s.filterGoodCandidates(ctx, threshold, goodCandidates, query)
 }
 
 func (s Storage) filterInitialCandidates(
@@ -268,6 +263,7 @@ func (s Storage) filterInitialCandidates(
 
 func (s Storage) filterGoodCandidates(
 	ctx context.Context,
+	scoreThreshold float64,
 	goodCandidates []_MatchCandidate,
 	query string,
 ) ([]MatchedDocument, error) {
@@ -284,12 +280,6 @@ func (s Storage) filterGoodCandidates(
 	documents, err := database.GetDocuments(ctx, s.db, documentIDs...)
 	if err != nil {
 		return nil, err
-	}
-
-	// Prepare default confidence threshold
-	scoreThreshold := s.threshold
-	if scoreThreshold <= 0 || scoreThreshold > 1 {
-		scoreThreshold = 0.5
 	}
 
 	// Create scores for each candidate
