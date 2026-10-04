@@ -10,7 +10,7 @@ import (
 
 	"github.com/RadhiFadlillah/typosearch/internal/database"
 	"github.com/jmoiron/sqlx"
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // Document is the text document that will be indexed to be later searched on.

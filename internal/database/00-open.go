@@ -14,11 +14,13 @@ import (
 func Open(ctx context.Context, path string) (db *sqlx.DB, err error) {
 	// Prepare DSN
 	q := url.Values{}
-	q.Add("_pragma", "foreign_keys(1)")
+	q.Add("_foreign_keys", "1")
+	q.Add("_journal_mode", "WAL")
+	q.Add("_cache_size", "-262144")
 	dsn := "file:" + path + "?" + q.Encode()
 
 	// Open database
-	db, err = sqlx.ConnectContext(ctx, "sqlite", dsn)
+	db, err = sqlx.ConnectContext(ctx, "sqlite3", dsn)
 	if err != nil {
 		err = fmt.Errorf("failed to open database: %v", err)
 		return
