@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func Test_snapMarkersToWordBoundaries(t *testing.T) {
+func TestSnapMarkersToWordBoundaries(t *testing.T) {
 	tests := []struct {
 		name      string
 		text      string
@@ -137,7 +137,7 @@ func Test_snapMarkersToWordBoundaries(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runes := []rune(tt.text)
-			got := snapMarkersToWordBoundaries(runes, tt.positions)
+			got := SnapMarkersToWordBoundaries(runes, tt.positions)
 
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf(

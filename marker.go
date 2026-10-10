@@ -9,6 +9,16 @@ import (
 	"github.com/RadhiFadlillah/typosearch/internal/database"
 )
 
+// Adjust positions of several markers to closest word boundaries. It doesn't mutate
+// the original positions.
+func SnapMarkersToWordBoundaries(textRunes []rune, markers [][2]int) [][2]int {
+	newPositions := make([][2]int, len(markers))
+	for i, position := range markers {
+		newPositions[i] = snapMarkerToWordBoundaries(textRunes, position)
+	}
+	return newPositions
+}
+
 // Adjust positions of a marker to word boundaries. It doesn't mutate the original position.
 func snapMarkerToWordBoundaries(textRunes []rune, marker [2]int) [2]int {
 	n := len(textRunes)
@@ -54,16 +64,6 @@ func snapMarkerToWordBoundaries(textRunes []rune, marker [2]int) [2]int {
 	}
 
 	return [2]int{start, end}
-}
-
-// Adjust positions of several markers to closest word boundaries. It doesn't mutate
-// the original positions.
-func snapMarkersToWordBoundaries(textRunes []rune, markers [][2]int) [][2]int {
-	newPositions := make([][2]int, len(markers))
-	for i, position := range markers {
-		newPositions[i] = snapMarkerToWordBoundaries(textRunes, position)
-	}
-	return newPositions
 }
 
 // Merges any marker with overlapping positions. This function assume that
