@@ -5,7 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"net/url"
-	"time"
+	"runtime"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -26,7 +26,11 @@ func Open(ctx context.Context, path string) (db *sqlx.DB, err error) {
 	}
 
 	// Adjust connection pool
-	db.SetConnMaxLifetime(time.Minute)
+	parallelism := min(8, max(2, runtime.GOMAXPROCS(0)))
+	db.SetMaxOpenConns(parallelism)
+	db.SetMaxIdleConns(parallelism)
+	db.SetConnMaxLifetime(0)
+	db.SetConnMaxIdleTime(0)
 
 	// Create transaction
 	var tx *sqlx.Tx
